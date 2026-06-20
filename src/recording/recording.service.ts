@@ -93,8 +93,7 @@ export class RecordingService {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
-    const timestamp = Date.now();
-    const outputPath = path.join(dirPath, `server-recording-${streamerId}-${timestamp}.mp4`);
+    const outputPath = path.join(dirPath, `server-recording-${streamerId}-%Y-%m-%d_%H-%M-%S.mp4`);
 
     const process = ffmpeg()
       .input(sdpPath)
@@ -105,7 +104,11 @@ export class RecordingService {
         '-c:v', 'copy',
         '-c:a', 'aac',
         '-strict', 'experimental',
-        '-f', 'mp4',
+        '-f', 'segment',
+        '-segment_time', '900', // 15 minutos en segundos
+        '-segment_format', 'mp4',
+        '-reset_timestamps', '1',
+        '-strftime', '1',
         '-movflags', 'frag_keyframe+empty_moov',
         '-y'
       ])

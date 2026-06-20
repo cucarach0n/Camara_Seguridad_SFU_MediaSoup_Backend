@@ -41,6 +41,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
+    this.chunkFiles.delete(client.id);
     // Clean up
     if (this.streamerSocketId === client.id) {
       this.streamerSocketId = null;
@@ -163,17 +164,32 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   // --- MODO A: Chunk recording ---
+  private chunkFiles: Map<string, { path: string, startTime: number }> = new Map();
+
   @SubscribeMessage('video-chunk')
   handleVideoChunk(@ConnectedSocket() client: Socket, @MessageBody() data: ArrayBuffer) {
     const recordingMode = process.env.RECORDING_MODE || 'A';
     if (recordingMode === 'A') {
-      const dateStr = new Date().toISOString().split('T')[0];
-      const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
-      if (!fs.existsSync(dirPath)) {
-        fs.mkdirSync(dirPath, { recursive: true });
+      const now = Date.now();
+      let fileInfo = this.chunkFiles.get(client.id);
+
+      // Si no existe o han pasado más de 15 minutos (900000 ms)
+      if (!fileInfo || (now - fileInfo.startTime) > 15 * 60 * 1000) {
+        const dateStr = new Date().toISOString().split('T')[0];
+        const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
+        if (!fs.existsSync(dirPath)) {
+          fs.mkdirSync(dirPath, { recursive: true });
+        }
+        
+        const timeStr = new Date().toISOString().split('T')[1].replace(/:/g, '-').split('.')[0];
+        const fileName = path.join(dirPath, `recording-${client.id}-${dateStr}_${timeStr}.webm`);
+        
+        fileInfo = { path: fileName, startTime: now };
+        this.chunkFiles.set(client.id, fileInfo);
+        this.logger.log(`Nuevo segmento de WebM creado: ${fileName}`);
       }
-      const fileName = path.join(dirPath, `recording-${client.id}.webm`);
-      fs.appendFileSync(fileName, Buffer.from(data));
+
+      fs.appendFileSync(fileInfo.path, Buffer.from(data));
     }
   }
 
