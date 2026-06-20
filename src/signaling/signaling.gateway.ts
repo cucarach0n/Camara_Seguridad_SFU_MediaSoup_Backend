@@ -167,7 +167,12 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   handleVideoChunk(@ConnectedSocket() client: Socket, @MessageBody() data: ArrayBuffer) {
     const recordingMode = process.env.RECORDING_MODE || 'A';
     if (recordingMode === 'A') {
-      const fileName = path.join(__dirname, '..', '..', `recording-${client.id}.webm`);
+      const dateStr = new Date().toISOString().split('T')[0];
+      const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
+      if (!fs.existsSync(dirPath)) {
+        fs.mkdirSync(dirPath, { recursive: true });
+      }
+      const fileName = path.join(dirPath, `recording-${client.id}.webm`);
       fs.appendFileSync(fileName, Buffer.from(data));
     }
   }

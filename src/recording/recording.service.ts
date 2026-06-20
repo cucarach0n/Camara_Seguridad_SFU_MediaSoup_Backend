@@ -81,7 +81,13 @@ export class RecordingService {
     const sdpPath = path.join(__dirname, '..', '..', `stream-${streamerId}.sdp`);
     fs.writeFileSync(sdpPath, sdpString);
 
-    const outputPath = path.join(__dirname, '..', '..', `server-recording-${streamerId}.mp4`);
+    const dateStr = new Date().toISOString().split('T')[0];
+    const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+    const timestamp = Date.now();
+    const outputPath = path.join(dirPath, `server-recording-${streamerId}-${timestamp}.mp4`);
 
     const process = ffmpeg()
       .input(sdpPath)
