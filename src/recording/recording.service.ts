@@ -119,6 +119,23 @@ export class RecordingService {
 
     process.save(outputPath);
     this.ffmpegProcesses.set(streamerId, process);
+
+    // FIX: FFmpeg takes a few milliseconds to start and bind the UDP ports.
+    // If Mediasoup sends the initial keyframe before FFmpeg is listening, it gets lost,
+    // and FFmpeg drops the stream because it can't find the resolution.
+    // We wait 1.5 seconds to ensure FFmpeg is listening, then request a fresh keyframe.
+    setTimeout(async () => {
+      for (const consumer of consumers) {
+        if (consumer.kind === 'video') {
+          try {
+            await consumer.requestKeyFrame();
+            this.logger.log(`Keyframe requested for video consumer ${consumer.id}`);
+          } catch (e) {
+            this.logger.error(`Failed to request keyframe: ${e}`);
+          }
+        }
+      }
+    }, 1500);
   }
 
   stopRecording(streamerId: string) {
