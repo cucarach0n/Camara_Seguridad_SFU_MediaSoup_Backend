@@ -1,5 +1,5 @@
 import { types } from 'mediasoup';
-
+require('dotenv').config();
 export const config = {
   worker: {
     rtcMinPort: 10000,
