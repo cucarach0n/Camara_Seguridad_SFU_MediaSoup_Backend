@@ -20,6 +20,16 @@ Este es el servidor de señalización y enrutamiento multimedia (SFU) construido
 $ npm install
 ```
 
+> [!TIP]
+> **Instalación en Oracle Cloud o servidores ARM (Ubuntu 20.04):**
+> Si presentas fallos de compilación en ARM, asegúrate de actualizar tu compilador a GCC 10 e instalar usando permisos de administrador para evitar problemas de NPM:
+> ```bash
+> sudo apt install -y gcc-10 g++-10
+> sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100
+> sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-10 100
+> npm install --unsafe-perm
+> ```
+
 ## Configuración
 Renombra el archivo `.env.example` a `.env` y configura tu modo de grabación preferido:
 ```bash

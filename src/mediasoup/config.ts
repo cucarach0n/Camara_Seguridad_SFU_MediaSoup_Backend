@@ -31,8 +31,8 @@ export const config = {
   webRtcTransport: {
     listenIps: [
       {
-        ip: '0.0.0.0',
-        announcedIp: '127.0.0.1', // Change this to public IP for production
+        ip: process.env.LISTEN_IP || '127.0.0.1',
+        announcedIp: process.env.ANNOUNCED_IP || undefined,
       },
     ] as any[],
     enableUdp: true,
