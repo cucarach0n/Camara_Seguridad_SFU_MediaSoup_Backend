@@ -69,6 +69,13 @@ export class RecordingService {
         sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}/${channels}`);
       } else {
         sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}`);
+        const fmtpParams: string[] = [];
+        for (const [key, value] of Object.entries(rtpParameters.codecs[0].parameters || {})) {
+          fmtpParams.push(`${key}=${value}`);
+        }
+        if (fmtpParams.length > 0) {
+          sdpLines.push(`a=fmtp:${pt} ${fmtpParams.join(';')}`);
+        }
       }
 
       await consumer.resume();
