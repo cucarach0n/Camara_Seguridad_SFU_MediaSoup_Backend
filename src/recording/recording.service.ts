@@ -130,6 +130,13 @@ export class RecordingService {
           try {
             await consumer.requestKeyFrame();
             this.logger.log(`Keyframe requested for video consumer ${consumer.id}`);
+            
+            // Check if Mediasoup is actually receiving video from the browser
+            const producer = producers.find(p => p.id === consumer.producerId);
+            if (producer) {
+              const stats = await producer.getStats();
+              this.logger.debug(`Stats de red del cliente: ${JSON.stringify(stats)}`);
+            }
           } catch (e) {
             this.logger.error(`Failed to request keyframe: ${e}`);
           }
