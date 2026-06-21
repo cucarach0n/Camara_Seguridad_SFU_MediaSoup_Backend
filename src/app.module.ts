@@ -6,12 +6,22 @@ import { MediasoupService } from './mediasoup/mediasoup.service';
 import { SignalingGateway } from './signaling/signaling.gateway';
 import { RecordingService } from './recording/recording.service';
 import { DvrCleanerService } from './recording/dvr-cleaner.service';
+import { GoogleDriveService } from './google-drive/google-drive.service';
+import { DvrUploaderService } from './recording/dvr-uploader.service';
 
 @Module({
   imports: [
     ScheduleModule.forRoot()
   ],
   controllers: [AppController],
-  providers: [AppService, MediasoupService, RecordingService, SignalingGateway, DvrCleanerService],
+  providers: [
+    AppService, 
+    MediasoupService, 
+    RecordingService, 
+    SignalingGateway, 
+    DvrCleanerService, 
+    GoogleDriveService, 
+    DvrUploaderService
+  ],
 })
 export class AppModule {}
