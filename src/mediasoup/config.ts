@@ -41,6 +41,6 @@ export const config = {
     initialAvailableOutgoingBitrate: 1000000,
   },
   plainTransport: {
-    listenIp: { ip: '127.0.0.1' },
+    listenIp: { ip: process.env.LISTEN_IP || '127.0.0.1' },
   }
 };

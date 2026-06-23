@@ -56,12 +56,14 @@ export class MediasoupService implements OnModuleInit {
     return transport;
   }
 
-  async createPlainTransport(): Promise<types.PlainTransport> {
-    return await this.router.createPlainTransport({
+  async createPlainTransport(options?: Partial<types.PlainTransportOptions>): Promise<types.PlainTransport> {
+    const plainTransportOptions: any = {
       listenIp: config.plainTransport.listenIp,
       rtcpMux: false,
       comedia: false,
-    });
+      ...options,
+    };
+    return await this.router.createPlainTransport(plainTransportOptions);
   }
 
   getRouter() {

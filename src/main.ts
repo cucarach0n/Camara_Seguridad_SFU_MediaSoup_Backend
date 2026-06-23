@@ -14,6 +14,8 @@ async function bootstrap() {
     prefix: '/recordings/',
   });
 
+  app.enableShutdownHooks();
+
   const port = process.env.PORT || 3000;
   await app.listen(port);
   console.log(`Backend Mediasoup is running on port ${port}`);

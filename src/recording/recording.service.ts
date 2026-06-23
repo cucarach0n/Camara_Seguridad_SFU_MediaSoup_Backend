@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { MediasoupService } from '../mediasoup/mediasoup.service';
 import { types } from 'mediasoup';
 const ffmpeg = require('fluent-ffmpeg');
@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 @Injectable()
-export class RecordingService {
+export class RecordingService implements OnModuleDestroy {
   private readonly logger = new Logger(RecordingService.name);
   private recordTransports: Map<string, types.PlainTransport[]> = new Map();
   private recordConsumers: Map<string, types.Consumer[]> = new Map();
@@ -24,9 +24,12 @@ export class RecordingService {
   async startRecording(producers: types.Producer[], streamerId: string) {
     if (producers.length === 0) return;
 
-    this.logger.log(`Iniciando grabación en servidor para Streamer: ${streamerId}`);
+    this.logger.log(`Iniciando grabación para ${streamerId} con ${producers.length} productores: ${producers.map(p => p.kind).join(', ')}`);
 
     const router = this.mediasoupService.getRouter();
+
+    // Clean up existing recording if any
+    await this.stopRecording(streamerId);
     let sdpLines = [
       'v=0',
       'o=- 0 0 IN IP4 127.0.0.1',
@@ -95,10 +98,11 @@ export class RecordingService {
     }
     const outputPath = path.join(dirPath, `server-recording-${streamerId}-%Y-%m-%d_%H-%M-%S.mp4`);
 
-    const process = ffmpeg()
-      .input(sdpPath)
+    const process = ffmpeg(sdpPath)
       .inputOptions([
-        '-protocol_whitelist', 'file,rtp,udp'
+        '-protocol_whitelist', 'file,rtp,udp',
+        '-analyzeduration', '10000000', // 10 segundos en microsegundos
+        '-probesize', '10000000'        // 10 MB
       ])
       .outputOptions([
         '-c:v', 'copy',
@@ -170,5 +174,12 @@ export class RecordingService {
       transport.close();
     }
     this.recordTransports.delete(streamerId);
+  }
+
+  onModuleDestroy() {
+    this.logger.log('Cerrando procesos FFmpeg y transportes de grabación al detener el módulo...');
+    for (const streamerId of this.ffmpegProcesses.keys()) {
+      this.stopRecording(streamerId);
+    }
   }
 }
