@@ -15,6 +15,7 @@ export class RecordingService implements OnModuleDestroy {
   private ffmpegProcesses: Map<string, any> = new Map();
   private activeGrabacionesDB: Map<string, number> = new Map();
   private stopResolvers: Map<string, () => void> = new Map();
+  private recordPorts: Map<string, number[]> = new Map();
 
   constructor(
     private mediasoupService: MediasoupService,
@@ -56,12 +57,14 @@ export class RecordingService implements OnModuleDestroy {
 
     const transports: types.PlainTransport[] = [];
     const consumers: types.Consumer[] = [];
+    const ports: number[] = [];
 
     for (const producer of producers) {
       const plainTransport = await this.mediasoupService.createPlainTransport();
       transports.push(plainTransport);
 
       const ffmpegPort = this.getFreePort();
+      ports.push(ffmpegPort);
 
       // Mediasoup enviará el flujo RTP a este puerto (donde FFmpeg escuchará)
       await plainTransport.connect({
@@ -105,6 +108,7 @@ export class RecordingService implements OnModuleDestroy {
 
     this.recordTransports.set(streamerId, transports);
     this.recordConsumers.set(streamerId, consumers);
+    this.recordPorts.set(streamerId, ports);
 
     const sdpString = sdpLines.join('\n');
     const sdpPath = path.join(__dirname, '..', '..', `stream-${streamerId}.sdp`);
@@ -134,18 +138,7 @@ export class RecordingService implements OnModuleDestroy {
     const process = ffmpeg(sdpPath)
       .inputOptions([
         '-protocol_whitelist', 'file,rtp,udp',
-        // use_wallclock_as_timestamps: usa el reloj de pared real en lugar de los
-        // timestamps RTP del stream. Esto soluciona tres problemas a la vez:
-        //   1. Elimina el timestamp inicial negativo (time=-577014h) causado por el
-        //      offset del reloj RTP de la cámara/browser desde que encendió.
-        //   2. Elimina el burst inicial (speed=4.4x) porque los paquetes se procesan
-        //      en tiempo real según el reloj del servidor, no del RTP.
-        //   3. Elimina el warning "Timestamps are unset in a packet".
-        '-use_wallclock_as_timestamps', '1',
-        // Para redes WAN el gateway puede enviar paquetes con jitter alto.
-        '-max_delay', '5000000',
-        '-reorder_queue_size', '0',
-        // 5s es suficiente; el codec ya está declarado en el SDP.
+        '-rw_timeout', '5000000',
         '-analyzeduration', '5000000',
         '-probesize', '5000000'
       ])
@@ -158,43 +151,18 @@ export class RecordingService implements OnModuleDestroy {
         '-segment_format', 'mp4',
         '-reset_timestamps', '1',
         '-strftime', '1',
-        // frag_keyframe: permite reproducción mientras se graba
-        // empty_moov: metadata al inicio del fragmento (streaming-friendly)
         '-movflags', 'frag_keyframe+empty_moov',
         '-y'
       ])
       .on('start', (cmd) => this.logger.log(`FFmpeg started: ${cmd}`))
       .on('stderr', (stderrLine) => this.logger.debug(`FFmpeg stderr: ${stderrLine}`))
-      .on('error', (err) => this.logger.error(`FFmpeg error: ${err.message}`))
+      .on('error', async (err) => {
+        this.logger.error(`FFmpeg error: ${err.message}`);
+        await this.finalizeRecording(streamerId, dirPath);
+      })
       .on('end', async () => {
         this.logger.log(`Grabación finalizada para streamer ${streamerId}`);
-        if (fs.existsSync(sdpPath)) fs.unlinkSync(sdpPath);
-        
-        // Finalizar registro en BD (requeriría listar el archivo real y ver tamaño, por ahora dummy)
-        const gId = this.activeGrabacionesDB.get(streamerId);
-        if (gId) {
-          // Buscamos el archivo más reciente generado
-          try {
-            const files = fs.readdirSync(dirPath).filter(f => f.includes(`server-recording-${streamerId}`));
-            if (files.length > 0) {
-              const lastFile = files.sort().reverse()[0];
-              const stat = fs.statSync(path.join(dirPath, lastFile));
-              // Asumiendo que FFmpeg ya terminó, registramos el tamaño.
-              // Duración aproximada podría sacarse de otra manera, por ahora null.
-              await this.grabacionesService.finalizar(gId, stat.size, 0, lastFile);
-              this.logger.log(`Metadata de grabación DB actualizada para ID ${gId}`);
-            }
-          } catch (err) {
-            this.logger.error(`Error actualizando metadatos de grabación: ${err.message}`);
-          }
-          this.activeGrabacionesDB.delete(streamerId);
-        }
-
-        const resolve = this.stopResolvers.get(streamerId);
-        if (resolve) {
-          resolve();
-          this.stopResolvers.delete(streamerId);
-        }
+        await this.finalizeRecording(streamerId, dirPath);
       });
 
     process.save(outputPath);
@@ -236,20 +204,25 @@ export class RecordingService implements OnModuleDestroy {
 
       if (process.ffmpegProc && process.ffmpegProc.stdin) {
         process.ffmpegProc.stdin.write('q\n');
+
+        // Send a dummy UDP packet to unblock FFmpeg on Windows so it can process 'q'
+        const dgram = require('dgram');
+        const dummyClient = dgram.createSocket('udp4');
+        const ports = this.recordPorts.get(streamerId) || [];
+        for (const port of ports) {
+          dummyClient.send(Buffer.from([0x00]), port, '127.0.0.1', () => {});
+        }
+        setTimeout(() => dummyClient.close(), 100);
+
       } else {
         process.kill('SIGINT');
       }
       this.ffmpegProcesses.delete(streamerId);
+      this.recordPorts.delete(streamerId);
     }
     
-    // Esperar a que FFmpeg termine antes de cortar el flujo de datos RTP
-    // Esto previene que FFmpeg se quede bloqueado esperando paquetes y tarde en procesar la 'q'
-    try {
-      await stopPromise;
-    } catch (e) {
-      this.logger.error(`Error esperando a que ffmpeg termine: ${e.message}`);
-    }
-
+    // Close consumers and transports FIRST so Mediasoup sends RTCP BYE to FFmpeg
+    // This allows FFmpeg to gracefully end the stream, even on Windows
     const consumers = this.recordConsumers.get(streamerId) || [];
     for (const consumer of consumers) {
       consumer.close();
@@ -261,12 +234,50 @@ export class RecordingService implements OnModuleDestroy {
       transport.close();
     }
     this.recordTransports.delete(streamerId);
+
+    // Esperar a que FFmpeg termine de escribir el archivo
+    try {
+      await stopPromise;
+    } catch (e) {
+      this.logger.error(`Error esperando a que ffmpeg termine: ${e.message}`);
+    }
   }
 
   onModuleDestroy() {
     this.logger.log('Cerrando procesos FFmpeg y transportes de grabación al detener el módulo...');
     for (const streamerId of this.ffmpegProcesses.keys()) {
       this.stopRecording(streamerId);
+    }
+  }
+
+  private async finalizeRecording(streamerId: string, dirPath: string) {
+    const sdpPath = path.join(__dirname, '..', '..', `stream-${streamerId}.sdp`);
+    if (fs.existsSync(sdpPath)) {
+      try { fs.unlinkSync(sdpPath); } catch (e) {}
+    }
+    
+    const gId = this.activeGrabacionesDB.get(streamerId);
+    if (gId) {
+      try {
+        const files = fs.readdirSync(dirPath).filter(f => f.includes(`server-recording-${streamerId}`));
+        if (files.length > 0) {
+          const lastFile = files.sort().reverse()[0];
+          const stat = fs.statSync(path.join(dirPath, lastFile));
+          await this.grabacionesService.finalizar(gId, stat.size, 0, lastFile);
+          this.logger.log(`Metadata de grabación DB actualizada para ID ${gId}`);
+        } else {
+          await this.grabacionesService.finalizar(gId, 0, 0, '');
+        }
+      } catch (err) {
+        this.logger.error(`Error actualizando metadatos de grabación: ${err.message}`);
+      }
+      this.activeGrabacionesDB.delete(streamerId);
+    }
+
+    const resolve = this.stopResolvers.get(streamerId);
+    if (resolve) {
+      resolve();
+      this.stopResolvers.delete(streamerId);
     }
   }
 }

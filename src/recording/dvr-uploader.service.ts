@@ -30,7 +30,7 @@ export class DvrUploaderService {
       const files = fs.readdirSync(dirPath);
       
       // Filtrar solo mp4 y webm
-      const videoFiles = files.filter(f => f.endsWith('.mp4') || f.endsWith('.webm'));
+      const videoFiles = files.filter(f => f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv'));
 
       for (const file of videoFiles) {
         const filePath = path.join(dirPath, file);

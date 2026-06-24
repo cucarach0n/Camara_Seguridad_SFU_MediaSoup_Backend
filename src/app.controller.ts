@@ -18,7 +18,7 @@ export class AppController {
     for (const date of dates) {
       const datePath = path.join(recordingsDir, date);
       if (fs.statSync(datePath).isDirectory()) {
-        const files = fs.readdirSync(datePath).filter(f => f.endsWith('.mp4') || f.endsWith('.webm'));
+        const files = fs.readdirSync(datePath).filter(f => f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv'));
         if (files.length > 0) {
           result.push({
             date,
