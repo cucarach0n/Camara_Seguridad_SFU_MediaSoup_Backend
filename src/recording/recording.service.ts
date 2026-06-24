@@ -72,6 +72,9 @@ export class RecordingService implements OnModuleDestroy {
         sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}/${channels}`);
       } else {
         sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}`);
+        // a=framerate es CRUCIAL: sin él, FFmpeg interpreta el clockRate de 90kHz
+        // como 90,000 fps en lugar de 30fps, causando burst de paquetes y video congelado.
+        sdpLines.push('a=framerate:30');
         const fmtpParams: string[] = [];
         for (const [key, value] of Object.entries(rtpParameters.codecs[0].parameters || {})) {
           fmtpParams.push(`${key}=${value}`);
@@ -101,8 +104,20 @@ export class RecordingService implements OnModuleDestroy {
     const process = ffmpeg(sdpPath)
       .inputOptions([
         '-protocol_whitelist', 'file,rtp,udp',
-        '-analyzeduration', '10000000', // 10 segundos en microsegundos
-        '-probesize', '10000000'        // 10 MB
+        // use_wallclock_as_timestamps: usa el reloj de pared real en lugar de los
+        // timestamps RTP del stream. Esto soluciona tres problemas a la vez:
+        //   1. Elimina el timestamp inicial negativo (time=-577014h) causado por el
+        //      offset del reloj RTP de la cámara/browser desde que encendió.
+        //   2. Elimina el burst inicial (speed=4.4x) porque los paquetes se procesan
+        //      en tiempo real según el reloj del servidor, no del RTP.
+        //   3. Elimina el warning "Timestamps are unset in a packet".
+        '-use_wallclock_as_timestamps', '1',
+        // Para redes WAN el gateway puede enviar paquetes con jitter alto.
+        '-max_delay', '5000000',
+        '-reorder_queue_size', '0',
+        // 5s es suficiente; el codec ya está declarado en el SDP.
+        '-analyzeduration', '5000000',
+        '-probesize', '5000000'
       ])
       .outputOptions([
         '-c:v', 'copy',
@@ -113,6 +128,8 @@ export class RecordingService implements OnModuleDestroy {
         '-segment_format', 'mp4',
         '-reset_timestamps', '1',
         '-strftime', '1',
+        // frag_keyframe: permite reproducción mientras se graba
+        // empty_moov: metadata al inicio del fragmento (streaming-friendly)
         '-movflags', 'frag_keyframe+empty_moov',
         '-y'
       ])
