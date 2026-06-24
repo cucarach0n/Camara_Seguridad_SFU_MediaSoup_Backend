@@ -15,6 +15,12 @@ import { Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Fase 3
+import { JwtService } from '@nestjs/jwt';
+import { GatewaysDbService } from '../gateways-db/gateways-db.service';
+import { TransmisionesService } from '../transmisiones/transmisiones.service';
+import { WsAuthMiddleware } from './ws-auth.middleware';
+
 @WebSocketGateway({ cors: true })
 export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -40,17 +46,32 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   constructor(
     private mediasoupService: MediasoupService,
-    private recordingService: RecordingService
+    private recordingService: RecordingService,
+    private jwtService: JwtService,
+    private gatewaysDbService: GatewaysDbService,
+    private transmisionesService: TransmisionesService,
   ) {}
+
+  afterInit(server: Server) {
+    server.use(WsAuthMiddleware(this.jwtService, this.gatewaysDbService));
+  }
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
-    const recordingMode = process.env.RECORDING_MODE || 'A';
-    client.emit('config-mode', recordingMode);
+    
+    // Solo enviamos configuración a usuarios, no a gateways
+    if (!client.data.isGateway) {
+      const recordingMode = process.env.RECORDING_MODE || 'A';
+      client.emit('config-mode', recordingMode);
 
-    // Enviar lista actualizada de cámaras al conectar
-    const list = this.getRtspCamerasList();
-    client.emit('rtsp-cameras-updated', list);
+      // Enviar lista filtrada por rol de usuario
+      this.broadcastCamerasToUser(client);
+    } else {
+      // Es un gateway. Lo marcamos en la BD como conectado
+      this.gatewaysDbService.marcarConectado(client.data.gatewayDbId, 1);
+      this.gateways.set(client.id, { gatewayId: client.data.gatewayId, cameras: [] }); // cameras ya no se usa localmente, viene de BD
+      this.broadcastCameras();
+    }
   }
 
   handleDisconnect(client: Socket) {
@@ -58,14 +79,11 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.chunkFiles.delete(client.id);
 
     // Si el cliente desconectado es un gateway
-    const gw = this.gateways.get(client.id);
-    if (gw) {
-      this.logger.warn(`Gateway desconectado: ${gw.gatewayId}`);
-      for (const cam of gw.cameras) {
-        if (this.rtspStreams.has(cam.id)) {
-          this.stopRtspStream(cam.id);
-        }
-      }
+    if (client.data.isGateway) {
+      this.logger.warn(`Gateway desconectado: ${client.data.gatewayId}`);
+      this.gatewaysDbService.marcarConectado(client.data.gatewayDbId, 0);
+      
+      // Detener streams asociados (simplificado, habría que chequear db)
       this.gateways.delete(client.id);
       this.broadcastCameras();
     }
@@ -244,26 +262,42 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     const recordingMode = process.env.RECORDING_MODE || 'A';
     if (recordingMode === 'B') {
       const myProducers = [...this.producers.values()].filter(p => p.appData.socketId === client.id);
-      this.recordingService.startRecording(myProducers, client.id);
+      
+      // Busca si el usuario registró una transmisión web
+      const transList = await this.transmisionesService.getList(client.data.user.id, 'USER');
+      const transmision = transList.find(t => t.tipo_origen === 'NAVEGADOR');
+      
+      this.recordingService.startRecording(
+        myProducers, 
+        client.id, 
+        transmision?.id, 
+        client.data.user?.id
+      );
     }
   }
 
   // --- MÉTODOS DE INTEGRACIÓN RTSP GATEWAY ---
 
   @SubscribeMessage('register-gateway')
-  handleRegisterGateway(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: { gatewayId: string; cameras: Array<{ id: string; name: string; rtspUrl: string }> }
-  ) {
-    this.logger.log(`Gateway de medios local registrado: ${data.gatewayId} (${client.id})`);
-    this.gateways.set(client.id, { gatewayId: data.gatewayId, cameras: data.cameras });
-    this.broadcastCameras();
+  handleRegisterGateway(@ConnectedSocket() client: Socket) {
+    // Ya validado en WsAuthMiddleware
     return true;
   }
 
   @SubscribeMessage('get-rtsp-cameras')
-  handleGetRtspCameras() {
-    return this.getRtspCamerasList();
+  async handleGetRtspCameras(@ConnectedSocket() client: Socket) {
+    if (client.data?.user) {
+      try {
+        const transList = await this.transmisionesService.getList(client.data.user.id, client.data.user.rol);
+        return transList.map(t => ({
+          id: t.id.toString(),
+          name: t.nombre,
+          isLive: this.rtspStreams.has(t.id.toString()),
+          grabacion_activa: t.grabacion_activa === 1
+        }));
+      } catch(e) {}
+    }
+    return [];
   }
 
   @SubscribeMessage('request-camera-stream')
@@ -271,8 +305,18 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { cameraId: string }
   ) {
-    const { cameraId } = data;
-    this.logger.log(`Viewer ${client.id} solicita cámara: ${cameraId}`);
+    const { cameraId } = data; // cameraId ahora es el ID en la BD
+    this.logger.log(`Viewer ${client.id} (user ${client.data.user.username}) solicita cámara: ${cameraId}`);
+
+    // Verificar permisos en DB
+    const transmision = await this.transmisionesService.findByCameraId(cameraId);
+    if (!transmision || !transmision.gateway) {
+      throw new Error('Transmisión o Gateway no encontrado');
+    }
+    
+    if (client.data.user.rol !== 'ADMIN' && transmision.user_id !== client.data.user.id) {
+      throw new Error('No tienes permiso para ver esta cámara');
+    }
 
     let viewers = this.cameraViewers.get(cameraId);
     if (!viewers) {
@@ -281,7 +325,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     }
     viewers.add(client.id);
 
-    // Si el stream ya está activo, retornar los IDs de productor existentes
+    // Si el stream ya está activo
     const activeStream = this.rtspStreams.get(cameraId);
     if (activeStream) {
       return {
@@ -290,21 +334,17 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       };
     }
 
-    // Si no está activo, buscar la cámara y su respectivo gateway
-    let targetCamera: { id: string; name: string; rtspUrl: string } | null = null;
+    // Buscar socket id del gateway conectado
     let gatewaySocketId: string | null = null;
-
-    for (const [socketId, gw] of this.gateways.entries()) {
-      const cam = gw.cameras.find(c => c.id === cameraId);
-      if (cam) {
-        targetCamera = cam;
-        gatewaySocketId = socketId;
+    for (const [sId, gw] of this.gateways.entries()) {
+      if (gw.gatewayId === transmision.gateway.identificador) {
+        gatewaySocketId = sId;
         break;
       }
     }
 
-    if (!targetCamera || !gatewaySocketId) {
-      throw new Error(`Cámara ${cameraId} o Gateway no encontrados`);
+    if (!gatewaySocketId) {
+      throw new Error(`Gateway de la cámara ${cameraId} está offline`);
     }
 
     // 1. Crear PlainTransports de MediaSoup con comedia: true para el ingreso de paquetes RTP
@@ -334,7 +374,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       gatewaySocket.emit('start-rtsp-stream', {
         cameraId,
-        rtspUrl: targetCamera.rtspUrl,
+        rtspUrl: transmision.url_rtsp,
         videoPort: videoTransport.tuple.localPort,
         audioPort: audioTransport.tuple.localPort,
         backendIp: listenIp
@@ -405,10 +445,15 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       audioProducer
     });
 
-    // Iniciar grabación del servidor (Modo B) para esta cámara RTSP
+    // Iniciar grabación del servidor (Modo B)
     const recordingMode = process.env.RECORDING_MODE || 'A';
     if (recordingMode === 'B') {
-      this.recordingService.startRecording(activeProducers, `rtsp-${cameraId}`);
+      this.recordingService.startRecording(
+        activeProducers, 
+        `rtsp-${cameraId}`, 
+        transmision.id, 
+        transmision.user_id
+      );
     }
 
     // Notificar estado a todos
@@ -436,6 +481,56 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     return true;
   }
 
+  @SubscribeMessage('toggle-dvr')
+  async handleToggleDvr(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { cameraId: string, state: boolean }
+  ) {
+    const { cameraId, state } = data;
+    try {
+      const transmision = await this.transmisionesService.findByCameraId(cameraId);
+      if (!transmision) throw new Error('Transmisión no encontrada');
+
+      if (client.data.user.rol !== 'ADMIN' && transmision.user_id !== client.data.user.id) {
+        throw new Error('No tienes permiso');
+      }
+
+      // 1. Actualizar DB
+      const estado = state ? 1 : 0;
+      await this.transmisionesService.setGrabacion(parseInt(cameraId), client.data.user.id, client.data.user.rol, estado);
+
+      // 2. Aplicar dinámicamente si el stream está vivo
+      const stream = this.rtspStreams.get(cameraId);
+      const recordingMode = process.env.RECORDING_MODE || 'A';
+      
+      if (stream && recordingMode === 'B') {
+        if (state) {
+          // Iniciar grabación (solo si no hay una ya activa para evitar dobles procesos)
+          const activeProducers = [stream.videoProducer];
+          if (stream.audioProducer) activeProducers.push(stream.audioProducer);
+          
+          this.recordingService.startRecording(
+            activeProducers, 
+            `rtsp-${cameraId}`, 
+            transmision.id, 
+            transmision.user_id
+          );
+        } else {
+          // Detener grabación y esperar
+          await this.recordingService.stopRecording(`rtsp-${cameraId}`);
+        }
+      }
+
+      // 3. Notificar a todos el nuevo estado del switch
+      this.broadcastCameras();
+
+      return { success: true, grabacion_activa: state };
+    } catch (e) {
+      this.logger.error(`Error toggling DVR: ${e.message}`);
+      return { success: false, error: e.message };
+    }
+  }
+
   private removeViewerFromCamera(socketId: string, cameraId: string) {
     const viewers = this.cameraViewers.get(cameraId);
     if (viewers) {
@@ -459,10 +554,18 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       }
 
       // Notificar al gateway para apagar el FFmpeg
-      const gatewayEntry = [...this.gateways.entries()].find(([_, gw]) => gw.cameras.some(c => c.id === cameraId));
-      if (gatewayEntry) {
-        const [gatewaySocketId] = gatewayEntry;
-        this.server.to(gatewaySocketId).emit('stop-rtsp-stream', { cameraId });
+      try {
+        const transmision = await this.transmisionesService.findByCameraId(cameraId);
+        if (transmision && transmision.gateway) {
+          const gatewayId = transmision.gateway.identificador;
+          const gatewayEntry = [...this.gateways.entries()].find(([_, gw]) => gw.gatewayId === gatewayId);
+          if (gatewayEntry) {
+            const [gatewaySocketId] = gatewayEntry;
+            this.server.to(gatewaySocketId).emit('stop-rtsp-stream', { cameraId });
+          }
+        }
+      } catch (e) {
+        this.logger.error(`Error al detener stream RTSP en gateway local: ${e}`);
       }
 
       // Cerrar productores
@@ -488,23 +591,26 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  private getRtspCamerasList() {
-    const list: Array<{ id: string; name: string; isLive: boolean }> = [];
-    for (const [_, gw] of this.gateways) {
-      for (const cam of gw.cameras) {
-        list.push({
-          id: cam.id,
-          name: cam.name,
-          isLive: this.rtspStreams.has(cam.id)
-        });
+  private async broadcastCameras() {
+    for (const socket of this.server.sockets.sockets.values()) {
+      if (!socket.data.isGateway) {
+        await this.broadcastCamerasToUser(socket);
       }
     }
-    return list;
   }
 
-  private broadcastCameras() {
-    const list = this.getRtspCamerasList();
-    this.server.emit('rtsp-cameras-updated', list);
+  private async broadcastCamerasToUser(client: Socket) {
+    if (client.data?.user) {
+      try {
+        const transList = await this.transmisionesService.getList(client.data.user.id, client.data.user.rol);
+        client.emit('rtsp-cameras-updated', transList.map(t => ({
+          id: t.id.toString(),
+          name: t.nombre,
+          isLive: this.rtspStreams.has(t.id.toString()),
+          grabacion_activa: t.grabacion_activa === 1
+        })));
+      } catch(e) {}
+    }
   }
 }
 

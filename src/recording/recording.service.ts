@@ -4,6 +4,8 @@ import { types } from 'mediasoup';
 const ffmpeg = require('fluent-ffmpeg');
 import * as fs from 'fs';
 import * as path from 'path';
+import { GrabacionesService } from '../grabaciones/grabaciones.service';
+import { TransmisionesService } from '../transmisiones/transmisiones.service';
 
 @Injectable()
 export class RecordingService implements OnModuleDestroy {
@@ -11,8 +13,14 @@ export class RecordingService implements OnModuleDestroy {
   private recordTransports: Map<string, types.PlainTransport[]> = new Map();
   private recordConsumers: Map<string, types.Consumer[]> = new Map();
   private ffmpegProcesses: Map<string, any> = new Map();
+  private activeGrabacionesDB: Map<string, number> = new Map();
+  private stopResolvers: Map<string, () => void> = new Map();
 
-  constructor(private mediasoupService: MediasoupService) {}
+  constructor(
+    private mediasoupService: MediasoupService,
+    private grabacionesService: GrabacionesService,
+    private transmisionesService: TransmisionesService
+  ) {}
 
   private portCounter = 20000;
 
@@ -21,8 +29,16 @@ export class RecordingService implements OnModuleDestroy {
     return this.portCounter;
   }
 
-  async startRecording(producers: types.Producer[], streamerId: string) {
+  async startRecording(producers: types.Producer[], streamerId: string, transmisionId?: number, userId?: number) {
     if (producers.length === 0) return;
+
+    if (transmisionId) {
+      const t = await this.transmisionesService.findById(transmisionId);
+      if (t.grabacion_activa === 0) {
+        this.logger.log(`Grabación deshabilitada (DVR OFF) para la transmisión ${transmisionId}`);
+        return;
+      }
+    }
 
     this.logger.log(`Iniciando grabación para ${streamerId} con ${producers.length} productores: ${producers.map(p => p.kind).join(', ')}`);
 
@@ -100,6 +116,20 @@ export class RecordingService implements OnModuleDestroy {
       fs.mkdirSync(dirPath, { recursive: true });
     }
     const outputPath = path.join(dirPath, `server-recording-${streamerId}-%Y-%m-%d_%H-%M-%S.mp4`);
+    const fileNameFormat = `server-recording-${streamerId}-%Y-%m-%d_%H-%M-%S.mp4`;
+
+    let grabacionDbId: number | null = null;
+    if (userId) {
+      // Registrar la intención de grabar en la base de datos
+      const g = await this.grabacionesService.registrarInicio({
+        user_id: userId,
+        transmision_id: transmisionId || null,
+        nombre_archivo: '', // luego se actualiza con el nombre real resuelto por ffmpeg
+        ruta_archivo: dateStr, // guardamos la subcarpeta de fecha para fácil acceso
+      });
+      grabacionDbId = g.id;
+      this.activeGrabacionesDB.set(streamerId, g.id);
+    }
 
     const process = ffmpeg(sdpPath)
       .inputOptions([
@@ -136,9 +166,35 @@ export class RecordingService implements OnModuleDestroy {
       .on('start', (cmd) => this.logger.log(`FFmpeg started: ${cmd}`))
       .on('stderr', (stderrLine) => this.logger.debug(`FFmpeg stderr: ${stderrLine}`))
       .on('error', (err) => this.logger.error(`FFmpeg error: ${err.message}`))
-      .on('end', () => {
-        this.logger.log(`Grabación finalizada: ${outputPath}`);
+      .on('end', async () => {
+        this.logger.log(`Grabación finalizada para streamer ${streamerId}`);
         if (fs.existsSync(sdpPath)) fs.unlinkSync(sdpPath);
+        
+        // Finalizar registro en BD (requeriría listar el archivo real y ver tamaño, por ahora dummy)
+        const gId = this.activeGrabacionesDB.get(streamerId);
+        if (gId) {
+          // Buscamos el archivo más reciente generado
+          try {
+            const files = fs.readdirSync(dirPath).filter(f => f.includes(`server-recording-${streamerId}`));
+            if (files.length > 0) {
+              const lastFile = files.sort().reverse()[0];
+              const stat = fs.statSync(path.join(dirPath, lastFile));
+              // Asumiendo que FFmpeg ya terminó, registramos el tamaño.
+              // Duración aproximada podría sacarse de otra manera, por ahora null.
+              await this.grabacionesService.finalizar(gId, stat.size, 0, lastFile);
+              this.logger.log(`Metadata de grabación DB actualizada para ID ${gId}`);
+            }
+          } catch (err) {
+            this.logger.error(`Error actualizando metadatos de grabación: ${err.message}`);
+          }
+          this.activeGrabacionesDB.delete(streamerId);
+        }
+
+        const resolve = this.stopResolvers.get(streamerId);
+        if (resolve) {
+          resolve();
+          this.stopResolvers.delete(streamerId);
+        }
       });
 
     process.save(outputPath);
@@ -169,9 +225,15 @@ export class RecordingService implements OnModuleDestroy {
     }, 1500);
   }
 
-  stopRecording(streamerId: string) {
+  async stopRecording(streamerId: string): Promise<void> {
     const process = this.ffmpegProcesses.get(streamerId);
+    let stopPromise = Promise.resolve();
+
     if (process) {
+      stopPromise = new Promise<void>((resolve) => {
+        this.stopResolvers.set(streamerId, resolve);
+      });
+
       if (process.ffmpegProc && process.ffmpegProc.stdin) {
         process.ffmpegProc.stdin.write('q\n');
       } else {
@@ -180,6 +242,14 @@ export class RecordingService implements OnModuleDestroy {
       this.ffmpegProcesses.delete(streamerId);
     }
     
+    // Esperar a que FFmpeg termine antes de cortar el flujo de datos RTP
+    // Esto previene que FFmpeg se quede bloqueado esperando paquetes y tarde en procesar la 'q'
+    try {
+      await stopPromise;
+    } catch (e) {
+      this.logger.error(`Error esperando a que ffmpeg termine: ${e.message}`);
+    }
+
     const consumers = this.recordConsumers.get(streamerId) || [];
     for (const consumer of consumers) {
       consumer.close();
