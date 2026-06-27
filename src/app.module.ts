@@ -12,7 +12,7 @@ import { MediasoupService } from './mediasoup/mediasoup.service';
 import { SignalingGateway } from './signaling/signaling.gateway';
 import { RecordingService } from './recording/recording.service';
 import { DvrCleanerService } from './recording/dvr-cleaner.service';
-import { GoogleDriveService } from './google-drive/google-drive.service';
+import { GoogleDriveModule } from './google-drive/google-drive.module';
 import { DvrUploaderService } from './recording/dvr-uploader.service';
 
 // Nueva capa: entidades TypeORM
@@ -67,6 +67,7 @@ import { SeedService } from './seed/seed.service';
     TransmisionesModule,
     GatewaysDbModule,
     GrabacionesModule,
+    GoogleDriveModule,
   ],
   controllers: [AppController],
   providers: [
@@ -75,7 +76,6 @@ import { SeedService } from './seed/seed.service';
     RecordingService,
     SignalingGateway,
     DvrCleanerService,
-    GoogleDriveService,
     DvrUploaderService,
     SeedService,      // ← crea el admin inicial al arrancar
   ],

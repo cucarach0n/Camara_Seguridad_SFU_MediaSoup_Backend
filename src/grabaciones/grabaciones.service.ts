@@ -2,12 +2,16 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Grabacion } from './entities/grabacion.entity';
+import { GoogleDriveService } from '../google-drive/google-drive.service';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class GrabacionesService {
   constructor(
     @InjectRepository(Grabacion)
     private repo: Repository<Grabacion>,
+    private googleDriveService: GoogleDriveService
   ) {}
 
   async registrarInicio(data: {
@@ -59,5 +63,31 @@ export class GrabacionesService {
     const grabacion = await query.getOne();
     if (!grabacion) throw new NotFoundException('Grabación no encontrada o sin permisos');
     return grabacion;
+  }
+
+  async delete(id: number, userId: number, rol: string): Promise<void> {
+    const grabacion = await this.getById(id, userId, rol);
+
+    // Borrar de disco si existe
+    if (grabacion.ruta_archivo && grabacion.nombre_archivo) {
+      const filePath = path.join(__dirname, '..', '..', '..', 'recordings', grabacion.ruta_archivo, grabacion.nombre_archivo);
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      const markerPath = `${filePath}.uploaded`;
+      if (fs.existsSync(markerPath)) {
+        fs.unlinkSync(markerPath);
+      }
+    }
+
+    // Borrar de Google Drive si fue subido
+    if (grabacion.subido_drive && grabacion.url_drive) {
+      const match = grabacion.url_drive.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        await this.googleDriveService.deleteFile(match[1]);
+      }
+    }
+
+    await this.repo.remove(grabacion);
   }
 }

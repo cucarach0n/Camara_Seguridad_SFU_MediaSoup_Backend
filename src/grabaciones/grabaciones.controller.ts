@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Request, UseGuards, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Delete, Param, Request, UseGuards, ParseIntPipe } from '@nestjs/common';
 import { GrabacionesService } from './grabaciones.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -15,5 +15,11 @@ export class GrabacionesController {
   @Get(':id')
   obtenerUno(@Param('id', ParseIntPipe) id: number, @Request() req) {
     return this.service.getById(id, req.user.id, req.user.rol);
+  }
+
+  @Delete(':id')
+  async eliminar(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    await this.service.delete(id, req.user.id, req.user.rol);
+    return { success: true, message: 'Grabación eliminada correctamente' };
   }
 }

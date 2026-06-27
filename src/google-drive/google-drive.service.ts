@@ -78,4 +78,21 @@ export class GoogleDriveService {
       return null;
     }
   }
+
+  async deleteFile(fileId: string): Promise<boolean> {
+    if (!this.drive) {
+      this.logger.error('Drive no está inicializado.');
+      return false;
+    }
+
+    try {
+      this.logger.log(`Eliminando archivo de Google Drive. File ID: ${fileId}...`);
+      await this.drive.files.delete({ fileId });
+      this.logger.log(`Archivo eliminado de Google Drive. File ID: ${fileId}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Error eliminando el archivo ${fileId} de Google Drive:`, error);
+      return false;
+    }
+  }
 }
