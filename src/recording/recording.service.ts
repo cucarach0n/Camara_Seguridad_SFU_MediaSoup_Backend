@@ -38,7 +38,8 @@ export class RecordingService implements OnModuleDestroy {
 
     if (transmisionId) {
       const t = await this.transmisionesService.findById(transmisionId);
-      if (t.grabacion_activa === 0) {
+      // Solo las cámaras RTSP validan grabacion_activa. Las webcams graban a petición del usuario.
+      if (t.tipo_origen === 'RTSP' && t.grabacion_activa === 0) {
         this.logger.log(`Grabación deshabilitada (DVR OFF) para la transmisión ${transmisionId}`);
         return;
       }
