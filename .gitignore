@@ -35,3 +35,4 @@ Thumbs.db
 server-recording-*.mp4
 recording-*.webm
 stream-*.sdp
+**/recordings/*
