@@ -50,8 +50,8 @@ export class DvrUploaderService {
         if (ageMs < MIN_AGE_MS) continue;
 
         // El formato es: rec__streamerId__transmisionId__userId__fecha_hora.mp4
-        let transmisionId = null;
-        let userId = null;
+        let transmisionId: number | null = null;
+        let userId: number | null = null;
         const parts = file.split('__');
         if (parts.length >= 5) {
           transmisionId = parts[2] !== 'NA' ? parseInt(parts[2], 10) : null;
@@ -59,7 +59,7 @@ export class DvrUploaderService {
         }
 
         // Crear el registro en la Base de Datos ya que el archivo está listo
-        let grabacionId = null;
+        let grabacionId: number | null = null;
         if (userId) {
           try {
             const fechaDir = path.basename(dirPath);
