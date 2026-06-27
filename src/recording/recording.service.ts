@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { GrabacionesService } from '../grabaciones/grabaciones.service';
 import { TransmisionesService } from '../transmisiones/transmisiones.service';
+import { DvrUploaderService } from './dvr-uploader.service';
+import { forwardRef, Inject } from '@nestjs/common';
 
 @Injectable()
 export class RecordingService implements OnModuleDestroy {
@@ -19,7 +21,9 @@ export class RecordingService implements OnModuleDestroy {
   constructor(
     private mediasoupService: MediasoupService,
     private grabacionesService: GrabacionesService,
-    private transmisionesService: TransmisionesService
+    private transmisionesService: TransmisionesService,
+    @Inject(forwardRef(() => DvrUploaderService))
+    private dvrUploaderService: DvrUploaderService
   ) {}
 
   private portCounter = 20000;
@@ -246,9 +250,13 @@ export class RecordingService implements OnModuleDestroy {
       try { fs.unlinkSync(sdpPath); } catch (e) {}
     }
 
-    // La base de datos ya no se actualiza aquí porque DvrUploaderService 
-    // se encarga de escanear los archivos y registrar TODOS los fragmentos.
-
+    // Notificamos al DvrUploaderService para procesar inmediatamente el archivo cerrado
+    setTimeout(() => {
+      this.dvrUploaderService.processAllImmediate().catch(e => 
+        this.logger.error(`Error en procesamiento inmediato de DVR: ${e.message}`)
+      );
+    }, 1000); // 1 sec delay to ensure file lock is released
+    
     const resolve = this.stopResolvers.get(streamerId);
     if (resolve) {
       resolve();

@@ -18,12 +18,21 @@ export class DvrUploaderService {
   // Se ejecuta cada 5 minutos
   @Cron(CronExpression.EVERY_5_MINUTES)
   async handleCron() {
+    await this.processFiles(true);
+  }
+
+  async processAllImmediate() {
+    this.logger.debug('Procesamiento inmediato invocado (bypass cooling time)...');
+    await this.processFiles(false);
+  }
+
+  private async processFiles(useCoolingTime: boolean) {
     if (!fs.existsSync(this.recordingsDir)) return;
 
     this.logger.debug('Buscando nuevos fragmentos de video para subir a Google Drive...');
     const now = Date.now();
     // Tiempo de "enfriamiento" de 2 minutos para asegurar que FFmpeg ya soltó el archivo
-    const MIN_AGE_MS = 2 * 60 * 1000; 
+    const MIN_AGE_MS = useCoolingTime ? 2 * 60 * 1000 : 0; 
 
     const directories = fs.readdirSync(this.recordingsDir);
 

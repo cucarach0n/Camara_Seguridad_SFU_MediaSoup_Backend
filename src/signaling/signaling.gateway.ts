@@ -98,7 +98,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     // Clean up streamer
     if (this.streamerSocketId === client.id) {
       this.streamerSocketId = null;
-      this.server.emit('streamer-disconnected');
+      this.server.emit('streamer-disconnected', client.id);
       
       const recordingMode = process.env.RECORDING_MODE || 'A';
       if (recordingMode === 'B') {
