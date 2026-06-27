@@ -13,7 +13,6 @@ export class RecordingService implements OnModuleDestroy {
   private recordTransports: Map<string, types.PlainTransport[]> = new Map();
   private recordConsumers: Map<string, types.Consumer[]> = new Map();
   private ffmpegProcesses: Map<string, any> = new Map();
-  private activeGrabacionesDB: Map<string, number> = new Map();
   private stopResolvers: Map<string, () => void> = new Map();
   private recordPorts: Map<string, number[]> = new Map();
 
@@ -119,21 +118,12 @@ export class RecordingService implements OnModuleDestroy {
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
     }
-    const outputPath = path.join(dirPath, `server-recording-${streamerId}-%Y-%m-%d_%H-%M-%S.mp4`);
-    const fileNameFormat = `server-recording-${streamerId}-%Y-%m-%d_%H-%M-%S.mp4`;
-
-    let grabacionDbId: number | null = null;
-    if (userId) {
-      // Registrar la intención de grabar en la base de datos
-      const g = await this.grabacionesService.registrarInicio({
-        user_id: userId,
-        transmision_id: transmisionId || null,
-        nombre_archivo: '', // luego se actualiza con el nombre real resuelto por ffmpeg
-        ruta_archivo: dateStr, // guardamos la subcarpeta de fecha para fácil acceso
-      });
-      grabacionDbId = g.id;
-      this.activeGrabacionesDB.set(streamerId, g.id);
-    }
+    
+    // El nombre incluye los IDs para que DvrUploaderService sepa a quién asignarlo
+    const tId = transmisionId || 'NA';
+    const uId = userId || 'NA';
+    const fileNameFormat = `rec__${streamerId}__${tId}__${uId}__%Y%m%d_%H%M%S.mp4`;
+    const outputPath = path.join(dirPath, fileNameFormat);
 
     const process = ffmpeg(sdpPath)
       .inputOptions([
@@ -255,24 +245,9 @@ export class RecordingService implements OnModuleDestroy {
     if (fs.existsSync(sdpPath)) {
       try { fs.unlinkSync(sdpPath); } catch (e) {}
     }
-    
-    const gId = this.activeGrabacionesDB.get(streamerId);
-    if (gId) {
-      try {
-        const files = fs.readdirSync(dirPath).filter(f => f.includes(`server-recording-${streamerId}`));
-        if (files.length > 0) {
-          const lastFile = files.sort().reverse()[0];
-          const stat = fs.statSync(path.join(dirPath, lastFile));
-          await this.grabacionesService.finalizar(gId, stat.size, 0, lastFile);
-          this.logger.log(`Metadata de grabación DB actualizada para ID ${gId}`);
-        } else {
-          await this.grabacionesService.finalizar(gId, 0, 0, '');
-        }
-      } catch (err) {
-        this.logger.error(`Error actualizando metadatos de grabación: ${err.message}`);
-      }
-      this.activeGrabacionesDB.delete(streamerId);
-    }
+
+    // La base de datos ya no se actualiza aquí porque DvrUploaderService 
+    // se encarga de escanear los archivos y registrar TODOS los fragmentos.
 
     const resolve = this.stopResolvers.get(streamerId);
     if (resolve) {
