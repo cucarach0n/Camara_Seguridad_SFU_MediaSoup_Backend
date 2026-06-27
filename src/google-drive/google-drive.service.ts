@@ -72,7 +72,7 @@ export class GoogleDriveService {
       });
 
       this.logger.log(`Subida completada. File ID: ${res.data.id}`);
-      return res.data.id;
+      return res.data.id || null;
     } catch (error) {
       this.logger.error(`Error subiendo el archivo ${fileName} a Google Drive:`, error);
       return null;
