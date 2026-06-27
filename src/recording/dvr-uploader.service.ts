@@ -61,10 +61,29 @@ export class DvrUploaderService {
         // El formato es: rec__streamerId__transmisionId__userId__fecha_hora.mp4
         let transmisionId: number | null = null;
         let userId: number | null = null;
+        let duracion_segundos = 0;
         const parts = file.split('__');
         if (parts.length >= 5) {
           transmisionId = parts[2] !== 'NA' ? parseInt(parts[2], 10) : null;
           userId = parts[3] !== 'NA' ? parseInt(parts[3], 10) : null;
+
+          try {
+            const dateStr = parts[4].replace('.mp4', '').replace('.webm', '').replace('.mkv', '');
+            if (dateStr.length >= 15) { // ej: 20260627_110335
+              const year = parseInt(dateStr.substring(0, 4), 10);
+              const month = parseInt(dateStr.substring(4, 6), 10) - 1;
+              const day = parseInt(dateStr.substring(6, 8), 10);
+              const hour = parseInt(dateStr.substring(9, 11), 10);
+              const min = parseInt(dateStr.substring(11, 13), 10);
+              const sec = parseInt(dateStr.substring(13, 15), 10);
+              
+              const startDate = new Date(year, month, day, hour, min, sec);
+              duracion_segundos = Math.floor((stat.mtimeMs - startDate.getTime()) / 1000);
+              if (duracion_segundos < 0) duracion_segundos = 0;
+            }
+          } catch (err) {
+            this.logger.warn(`No se pudo extraer la fecha de inicio del archivo: ${file}`);
+          }
         }
 
         // Crear el registro en la Base de Datos ya que el archivo está listo
@@ -80,8 +99,8 @@ export class DvrUploaderService {
             });
             grabacionId = g.id;
             
-            // Inmediatamente finalizarlo con su tamaño
-            await this.grabacionesService.finalizar(grabacionId, stat.size, 0, file);
+            // Inmediatamente finalizarlo con su tamaño y duración
+            await this.grabacionesService.finalizar(grabacionId, stat.size, duracion_segundos, file);
           } catch (dbErr) {
             this.logger.error(`Error registrando el fragmento ${file} en BD:`, dbErr);
             // Seguimos adelante para no bloquear la subida a Drive
