@@ -40,16 +40,16 @@ export class GoogleDriveService {
     }
   }
 
-  async uploadFile(filePath: string, fileName: string): Promise<boolean> {
+  async uploadFile(filePath: string, fileName: string): Promise<string | null> {
     if (!this.drive) {
       this.logger.error('Drive no está inicializado.');
-      return false;
+      return null;
     }
 
     const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
     if (!folderId) {
       this.logger.error('GOOGLE_DRIVE_FOLDER_ID no está definido en el .env');
-      return false;
+      return null;
     }
 
     try {
@@ -72,10 +72,10 @@ export class GoogleDriveService {
       });
 
       this.logger.log(`Subida completada. File ID: ${res.data.id}`);
-      return true;
+      return res.data.id;
     } catch (error) {
       this.logger.error(`Error subiendo el archivo ${fileName} a Google Drive:`, error);
-      return false;
+      return null;
     }
   }
 }

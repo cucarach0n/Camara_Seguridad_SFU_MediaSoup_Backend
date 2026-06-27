@@ -30,6 +30,10 @@ export class GrabacionesService {
     await this.repo.update(id, { subido_drive: 1, url_drive });
   }
 
+  async marcarSubidaDrivePorNombre(nombre_archivo: string, url_drive: string) {
+    await this.repo.update({ nombre_archivo }, { subido_drive: 1, url_drive });
+  }
+
   async getList(userId: number, rol: string): Promise<Grabacion[]> {
     const query = this.repo.createQueryBuilder('g')
       .leftJoinAndSelect('g.usuario', 'u')

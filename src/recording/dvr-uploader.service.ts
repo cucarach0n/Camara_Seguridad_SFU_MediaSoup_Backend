@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { GoogleDriveService } from '../google-drive/google-drive.service';
+import { GrabacionesService } from '../grabaciones/grabaciones.service';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -9,7 +10,10 @@ export class DvrUploaderService {
   private readonly logger = new Logger(DvrUploaderService.name);
   private readonly recordingsDir = path.join(__dirname, '..', '..', 'recordings');
 
-  constructor(private googleDriveService: GoogleDriveService) {}
+  constructor(
+    private googleDriveService: GoogleDriveService,
+    private grabacionesService: GrabacionesService
+  ) {}
 
   // Se ejecuta cada 5 minutos
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -46,12 +50,20 @@ export class DvrUploaderService {
         if (ageMs < MIN_AGE_MS) continue;
 
         // Proceder a subir
-        const success = await this.googleDriveService.uploadFile(filePath, file);
+        const fileId = await this.googleDriveService.uploadFile(filePath, file);
 
-        if (success) {
+        if (fileId) {
           // Crear un archivo marcador vacío para no volver a subirlo
           fs.writeFileSync(markerPath, '');
-          this.logger.log(`Video marcado como subido: ${file}`);
+          this.logger.log(`Video marcado como subido localmente: ${file}`);
+          
+          try {
+            const urlDrive = `https://drive.google.com/file/d/${fileId}/view`;
+            await this.grabacionesService.marcarSubidaDrivePorNombre(file, urlDrive);
+            this.logger.log(`Base de datos actualizada con URL de Drive para: ${file}`);
+          } catch (dbErr) {
+            this.logger.error(`Error actualizando base de datos para el archivo ${file}:`, dbErr);
+          }
         }
       }
     }

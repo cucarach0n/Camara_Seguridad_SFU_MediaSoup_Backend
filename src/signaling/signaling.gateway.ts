@@ -279,8 +279,34 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   // --- MÉTODOS DE INTEGRACIÓN RTSP GATEWAY ---
 
   @SubscribeMessage('register-gateway')
-  handleRegisterGateway(@ConnectedSocket() client: Socket) {
+  async handleRegisterGateway(@ConnectedSocket() client: Socket) {
     // Ya validado en WsAuthMiddleware
+    const gatewayId = client.data.gatewayId;
+    this.logger.log(`Gateway registrado exitosamente: ${gatewayId}`);
+
+    // Si hubo una desconexión temporal del gateway pero el backend seguía vivo,
+    // los espectadores siguen esperando el video. Le decimos al gateway que retome
+    // todas las transmisiones de sus cámaras que figuran como activas en el backend.
+    for (const [cameraId, streamInfo] of this.rtspStreams.entries()) {
+      try {
+        const transmision = await this.transmisionesService.findByCameraId(cameraId);
+        if (transmision && transmision.gateway && transmision.gateway.identificador === gatewayId) {
+          const listenIp = process.env.LISTEN_IP || '127.0.0.1';
+          this.logger.log(`Auto-recuperación: Re-emitiendo start-rtsp-stream al gateway ${gatewayId} para cámara ${cameraId}`);
+          
+          client.emit('start-rtsp-stream', {
+            cameraId,
+            rtspUrl: transmision.url_rtsp,
+            videoPort: streamInfo.videoTransport.tuple.localPort,
+            audioPort: streamInfo.audioTransport ? streamInfo.audioTransport.tuple.localPort : 0,
+            backendIp: listenIp
+          });
+        }
+      } catch (e) {
+        this.logger.error(`Error en auto-recuperación de cámara ${cameraId} para gateway ${gatewayId}:`, e);
+      }
+    }
+
     return true;
   }
 
