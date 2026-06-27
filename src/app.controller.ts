@@ -5,7 +5,7 @@ import * as path from 'path';
 @Controller()
 export class AppController {
   
-  @Get('api/videos')
+  @Get('videos')
   getVideos() {
     const recordingsDir = path.join(__dirname, '..', 'recordings');
     if (!fs.existsSync(recordingsDir)) {

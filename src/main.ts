@@ -8,6 +8,10 @@ dotenv.config();
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  
+  // Agregar prefijo global para todas las rutas del API (soluciona colisión con Frontend)
+  app.setGlobalPrefix('api');
+  
   app.enableCors({ origin: '*' });
 
   app.useStaticAssets(join(__dirname, '..', 'recordings'), {
