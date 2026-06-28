@@ -40,24 +40,64 @@ export class GoogleDriveService {
     }
   }
 
-  async uploadFile(filePath: string, fileName: string): Promise<string | null> {
+  async getOrCreateFolder(folderName: string, parentId: string): Promise<string | null> {
+    if (!this.drive) return null;
+    try {
+      const res = await this.drive.files.list({
+        q: `mimeType='application/vnd.google-apps.folder' and name='${folderName}' and '${parentId}' in parents and trashed=false`,
+        fields: 'files(id, name)',
+        spaces: 'drive',
+      });
+      if (res.data.files && res.data.files.length > 0) {
+        return res.data.files[0].id || null;
+      }
+      
+      const fileMetadata = {
+        name: folderName,
+        mimeType: 'application/vnd.google-apps.folder',
+        parents: [parentId]
+      };
+      const createRes = await this.drive.files.create({
+        requestBody: fileMetadata,
+        fields: 'id'
+      });
+      return createRes.data.id || null;
+    } catch (e) {
+      this.logger.error(`Error buscando/creando carpeta ${folderName}: ${e.message}`);
+      return null;
+    }
+  }
+
+  async uploadFile(filePath: string, fileName: string, userIdStr: string = 'NA', dateStr: string = ''): Promise<string | null> {
     if (!this.drive) {
       this.logger.error('Drive no está inicializado.');
       return null;
     }
 
-    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-    if (!folderId) {
+    const baseFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+    if (!baseFolderId) {
       this.logger.error('GOOGLE_DRIVE_FOLDER_ID no está definido en el .env');
       return null;
     }
 
+    let targetFolderId = baseFolderId;
+
     try {
-      this.logger.log(`Subiendo a Google Drive: ${fileName}...`);
+      if (userIdStr && userIdStr !== 'NA') {
+        const userFolderId = await this.getOrCreateFolder(`Usuario_${userIdStr}`, targetFolderId);
+        if (userFolderId) targetFolderId = userFolderId;
+      }
+      
+      if (dateStr) {
+        const dateFolderId = await this.getOrCreateFolder(dateStr, targetFolderId);
+        if (dateFolderId) targetFolderId = dateFolderId;
+      }
+
+      this.logger.log(`Subiendo a Google Drive: ${fileName} en carpeta ${targetFolderId}...`);
       
       const fileMetadata = {
         name: fileName,
-        parents: [folderId],
+        parents: [targetFolderId],
       };
       
       const media = {
@@ -94,5 +134,22 @@ export class GoogleDriveService {
       this.logger.error(`Error eliminando el archivo ${fileId} de Google Drive:`, error);
       return false;
     }
+  }
+
+  async getFileStream(fileId: string, range?: string) {
+    if (!this.drive) throw new Error('Drive no está inicializado');
+    
+    const headers: any = {};
+    if (range) {
+      headers['Range'] = range;
+    }
+    
+    return this.drive.files.get({
+      fileId: fileId,
+      alt: 'media'
+    }, {
+      responseType: 'stream',
+      headers: headers
+    });
   }
 }

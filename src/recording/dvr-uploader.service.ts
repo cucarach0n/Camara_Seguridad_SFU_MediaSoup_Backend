@@ -119,7 +119,7 @@ export class DvrUploaderService {
         }
 
         // Proceder a subir (opcional, si Drive está configurado)
-        const fileId = await this.googleDriveService.uploadFile(filePath, file);
+        const fileId = await this.googleDriveService.uploadFile(filePath, file, userId ? userId.toString() : 'NA', dir);
 
         if (fileId && grabacionId) {
           try {

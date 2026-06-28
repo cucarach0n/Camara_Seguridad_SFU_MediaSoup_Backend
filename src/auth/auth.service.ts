@@ -38,4 +38,10 @@ export class AuthService {
     if (!user) throw new UnauthorizedException('Usuario no encontrado');
     return { id: user.id, username: user.username, rol: user.rol };
   }
+
+  async refreshToken(userTokenData: any) {
+    const user = await this.usuariosRepo.findOne({ where: { id: userTokenData.id, activo: 1 } });
+    if (!user) throw new UnauthorizedException('Usuario inválido o inactivo');
+    return this.login(user);
+  }
 }
