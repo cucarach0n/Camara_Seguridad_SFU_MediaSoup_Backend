@@ -47,10 +47,16 @@ export class DvrUploaderService {
 
       for (const file of videoFiles) {
         const filePath = path.join(dirPath, file);
-        const markerPath = `${filePath}.uploaded`;
+        const markerPath = `${filePath}.processed`;
 
-        // Si ya está subido, lo ignoramos
+        // Si ya está procesado y registrado en DB, lo ignoramos
         if (fs.existsSync(markerPath)) continue;
+
+        // Soporte temporal para marcadores antiguos
+        if (fs.existsSync(`${filePath}.uploaded`)) {
+          fs.renameSync(`${filePath}.uploaded`, markerPath);
+          continue;
+        }
 
         const stat = fs.statSync(filePath);
         const ageMs = now - stat.mtimeMs;
@@ -101,28 +107,27 @@ export class DvrUploaderService {
             
             // Inmediatamente finalizarlo con su tamaño y duración
             await this.grabacionesService.finalizar(grabacionId, stat.size, duracion_segundos, file);
+            
+            // Crear el marcador para no volver a procesarlo NUNCA MÁS (independiente de si Drive funciona o no)
+            fs.writeFileSync(markerPath, '');
+            this.logger.log(`Video registrado en BD y marcado como procesado: ${file}`);
           } catch (dbErr) {
             this.logger.error(`Error registrando el fragmento ${file} en BD:`, dbErr);
-            // Seguimos adelante para no bloquear la subida a Drive
+            // No creamos el marcador para que se intente registrar en el siguiente ciclo
+            continue; 
           }
         }
 
-        // Proceder a subir
+        // Proceder a subir (opcional, si Drive está configurado)
         const fileId = await this.googleDriveService.uploadFile(filePath, file);
 
-        if (fileId) {
-          // Crear un archivo marcador vacío para no volver a subirlo
-          fs.writeFileSync(markerPath, '');
-          this.logger.log(`Video subido y marcado localmente: ${file}`);
-          
-          if (grabacionId) {
-            try {
-              const urlDrive = `https://drive.google.com/file/d/${fileId}/view`;
-              await this.grabacionesService.marcarSubidaDrive(grabacionId, urlDrive);
-              this.logger.log(`Base de datos actualizada con URL de Drive para ID: ${grabacionId}`);
-            } catch (dbErr) {
-              this.logger.error(`Error actualizando base de datos tras subida de ${file}:`, dbErr);
-            }
+        if (fileId && grabacionId) {
+          try {
+            const urlDrive = `https://drive.google.com/file/d/${fileId}/view`;
+            await this.grabacionesService.marcarSubidaDrive(grabacionId, urlDrive);
+            this.logger.log(`Base de datos actualizada con URL de Drive para ID: ${grabacionId}`);
+          } catch (dbErr) {
+            this.logger.error(`Error actualizando base de datos tras subida de ${file}:`, dbErr);
           }
         }
       }
