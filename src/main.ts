@@ -6,6 +6,13 @@ import { join } from 'path';
 
 dotenv.config();
 
+// Forzar zona horaria local si está definida en .env o usar America/Lima por defecto
+if (process.env.TZ) {
+  process.env.TZ = process.env.TZ;
+} else {
+  process.env.TZ = 'America/Lima';
+}
+
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
   

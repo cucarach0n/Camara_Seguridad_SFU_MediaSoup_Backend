@@ -4,6 +4,7 @@ import { GoogleDriveService } from '../google-drive/google-drive.service';
 import { GrabacionesService } from '../grabaciones/grabaciones.service';
 import * as fs from 'fs';
 import * as path from 'path';
+const ffmpeg = require('fluent-ffmpeg');
 
 @Injectable()
 export class DvrUploaderService {
@@ -14,6 +15,17 @@ export class DvrUploaderService {
     private googleDriveService: GoogleDriveService,
     private grabacionesService: GrabacionesService
   ) {}
+
+  private getVideoDuration(filePath: string): Promise<number> {
+    return new Promise((resolve) => {
+      ffmpeg.ffprobe(filePath, (err, metadata) => {
+        if (err || !metadata || !metadata.format || !metadata.format.duration) {
+          return resolve(0);
+        }
+        resolve(Math.floor(metadata.format.duration));
+      });
+    });
+  }
 
   // Se ejecuta cada 5 minutos
   @Cron(CronExpression.EVERY_5_MINUTES)
@@ -84,8 +96,10 @@ export class DvrUploaderService {
               const sec = parseInt(dateStr.substring(13, 15), 10);
               
               const startDate = new Date(year, month, day, hour, min, sec);
-              duracion_segundos = Math.floor((stat.mtimeMs - startDate.getTime()) / 1000);
-              if (duracion_segundos < 0) duracion_segundos = 0;
+              const duracion_matematica = Math.floor((stat.mtimeMs - startDate.getTime()) / 1000);
+              const duracion_real = await this.getVideoDuration(filePath);
+              
+              duracion_segundos = duracion_real > 0 ? duracion_real : Math.max(0, duracion_matematica);
             }
           } catch (err) {
             this.logger.warn(`No se pudo extraer la fecha de inicio del archivo: ${file}`);
