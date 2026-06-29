@@ -88,11 +88,11 @@ export class RecordingService implements OnModuleDestroy {
       const activeProxy = proxy!;
       const activeFfmpegPort = ffmpegPort!;
 
-      // Mediasoup enviará el flujo RTP al proxy, que normalizará el SSRC y enviará a FFmpeg
+      // Mediasoup enviará el flujo RTP y RTCP al proxy. El proxy filtra el RTCP y normaliza el RTP.
       await plainTransport.connect({
         ip: '127.0.0.1',
         port: activeProxy.proxyPort,
-        rtcpPort: activeFfmpegPort + 1
+        rtcpPort: activeProxy.proxyPort
       });
 
       // Filter out RTX and FEC from router capabilities so Mediasoup only sends the raw stream
