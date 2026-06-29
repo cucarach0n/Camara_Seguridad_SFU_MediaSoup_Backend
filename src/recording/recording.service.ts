@@ -98,7 +98,7 @@ export class RecordingService implements OnModuleDestroy {
       // Filter out RTX and FEC from router capabilities so Mediasoup only sends the raw stream
       const noRtxCapabilities = {
         ...router.rtpCapabilities,
-        codecs: router.rtpCapabilities.codecs.filter(c => 
+        codecs: (router.rtpCapabilities.codecs || []).filter(c => 
           !c.mimeType.toLowerCase().includes('/rtx') && 
           !c.mimeType.toLowerCase().includes('/ulpfec') &&
           !c.mimeType.toLowerCase().includes('/flexfec') &&
