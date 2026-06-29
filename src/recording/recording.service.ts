@@ -142,7 +142,9 @@ export class RecordingService implements OnModuleDestroy {
           '-protocol_whitelist', 'file,rtp,udp',
           '-rw_timeout', '10000000', // 10 seconds of tolerance for reconnects
           '-analyzeduration', '5000000',
-          '-probesize', '5000000'
+          '-probesize', '5000000',
+          '-use_wallclock_as_timestamps', '1', // Ignora saltos de timestamp RTP al reconectar
+          '-fflags', '+genpts' // Regenera timestamps correctamente
         ])
       .outputOptions([
         '-c:v', 'copy',
