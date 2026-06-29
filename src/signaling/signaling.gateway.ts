@@ -282,6 +282,20 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     return true;
   }
 
+  @SubscribeMessage('stop-streaming')
+  async handleExplicitStopStreaming(@ConnectedSocket() client: Socket) {
+    const streamerId = this.socketStreamerMap.get(client.id) || client.id;
+    this.logger.log(`Deteniendo transmisión explícitamente para ${streamerId}`);
+
+    // Limpiar para que el disconnect posterior no intente pausar
+    this.socketStreamerMap.delete(client.id);
+
+    const recordingMode = process.env.RECORDING_MODE || 'A';
+    if (recordingMode === 'B') {
+      await this.recordingService.stopRecording(streamerId);
+    }
+  }
+
   // --- MODO A: Chunk recording ---
   private chunkFiles: Map<string, { path: string; startTime: number }> = new Map();
 
