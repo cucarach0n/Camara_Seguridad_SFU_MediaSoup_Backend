@@ -283,6 +283,10 @@ export class RecordingService implements OnModuleDestroy {
   }
 
   async pauseRecording(streamerId: string): Promise<void> {
+    if (!this.ffmpegProcesses.has(streamerId)) {
+      return; // No es un streamer activo, ignorar silenciosamente
+    }
+    
     this.logger.log(`Pausando grabación (cerrando consumers) para ${streamerId}. FFmpeg se quedará esperando reconexión por 10s...`);
     
     const consumers = this.recordConsumers.get(streamerId) || [];
