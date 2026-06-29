@@ -45,6 +45,9 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   private cameraViewers: Map<string, Set<string>> = new Map();
   private rtspCamerasStatus: Map<string, boolean> = new Map();
 
+  // Mapa para reconectar webcams persistentes (socket.id -> webcam-transmisionId)
+  private socketStreamerMap: Map<string, string> = new Map();
+
   constructor(
     private mediasoupService: MediasoupService,
     private recordingService: RecordingService,
@@ -154,12 +157,15 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (this.streamerSocketId === client.id) {
       this.streamerSocketId = null;
       this.server.emit('streamer-disconnected', client.id);
-      
-      const recordingMode = process.env.RECORDING_MODE || 'A';
-      if (recordingMode === 'B') {
-        this.recordingService.pauseRecording(client.id);
-      }
     }
+    
+    const recordingMode = process.env.RECORDING_MODE || 'A';
+    if (recordingMode === 'B') {
+      const streamerId = this.socketStreamerMap.get(client.id) || client.id;
+      this.recordingService.pauseRecording(streamerId);
+      this.socketStreamerMap.delete(client.id);
+    }
+
     const transportsToClose = [...this.transports.entries()].filter(([id]) => id.startsWith(client.id));
     for (const [id, transport] of transportsToClose) {
       transport.close();
@@ -327,9 +333,12 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         tId = transmision?.id;
       }
       
+      const streamerId = tId ? `webcam-${tId}` : client.id;
+      this.socketStreamerMap.set(client.id, streamerId);
+
       this.recordingService.startRecording(
         myProducers, 
-        client.id, 
+        streamerId, 
         tId, 
         client.data.user?.id
       );
