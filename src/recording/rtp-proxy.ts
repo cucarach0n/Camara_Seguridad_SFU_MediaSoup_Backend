@@ -18,7 +18,16 @@ export class RtpProxy {
     this.server = dgram.createSocket('udp4');
     
     this.server.on('message', (msg, rinfo) => {
+      // Ignore packets from FFmpeg itself
+      if (rinfo.port === this.targetPort || rinfo.port === this.targetPort + 1) return;
+
       if (msg.length >= 12) {
+        // Validar si es RTP real y no RTCP (PT 200-206)
+        const pt = msg.readUInt8(1) & 0x7F;
+        if (pt >= 200 && pt <= 206) {
+          return; // Ignore RTCP
+        }
+
         const currentSeq = msg.readUInt16BE(2);
         const currentTs = msg.readUInt32BE(4);
         const currentSsrc = msg.readUInt32BE(8);
