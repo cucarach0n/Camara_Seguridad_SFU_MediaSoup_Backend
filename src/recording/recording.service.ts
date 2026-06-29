@@ -120,6 +120,8 @@ export class RecordingService implements OnModuleDestroy {
         const clockRate = rtpParameters.codecs[0].clockRate;
         const channels = rtpParameters.codecs[0].channels || 1;
 
+        activeProxy.setMainPt(pt);
+
         sdpLines.push(`m=${producer.kind} ${ffmpegPort} RTP/AVP ${pt}`);
         if (producer.kind === 'audio') {
           sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}/${channels}`);

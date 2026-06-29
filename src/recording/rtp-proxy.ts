@@ -13,6 +13,7 @@ export class RtpProxy {
   
   private seqOffset: number = 0;
   private tsOffset: number = 0;
+  private mainPt?: number;
 
   constructor(private targetPort: number, private targetIp: string = '127.0.0.1') {
     this.server = dgram.createSocket('udp4');
@@ -22,10 +23,16 @@ export class RtpProxy {
       if (rinfo.port === this.targetPort || rinfo.port === this.targetPort + 1) return;
 
       if (msg.length >= 12) {
-        // Validar si es RTP real y no RTCP (PT 200-206)
         const pt = msg.readUInt8(1) & 0x7F;
+
+        // Validar si es RTP real y no RTCP (PT 200-206)
         if (pt >= 200 && pt <= 206) {
           return; // Ignore RTCP
+        }
+
+        // Si tenemos un PT principal configurado, ignorar todos los demas (e.g. RTX, FEC, Padding)
+        if (this.mainPt !== undefined && pt !== this.mainPt) {
+          return;
         }
 
         const currentSeq = msg.readUInt16BE(2);
@@ -68,6 +75,10 @@ export class RtpProxy {
       }
       this.server.send(msg, this.targetPort, this.targetIp);
     });
+  }
+
+  setMainPt(pt: number) {
+    this.mainPt = pt;
   }
 
   async start(): Promise<number> {
