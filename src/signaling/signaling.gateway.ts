@@ -157,7 +157,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       
       const recordingMode = process.env.RECORDING_MODE || 'A';
       if (recordingMode === 'B') {
-        this.recordingService.stopRecording(client.id);
+        this.recordingService.pauseRecording(client.id);
       }
     }
     const transportsToClose = [...this.transports.entries()].filter(([id]) => id.startsWith(client.id));

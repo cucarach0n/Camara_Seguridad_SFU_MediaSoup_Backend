@@ -16,7 +16,7 @@ export class RecordingService implements OnModuleDestroy {
   private recordConsumers: Map<string, types.Consumer[]> = new Map();
   private ffmpegProcesses: Map<string, any> = new Map();
   private stopResolvers: Map<string, () => void> = new Map();
-  private recordPorts: Map<string, number[]> = new Map();
+  private recordPorts: Map<string, Map<string, number>> = new Map();
 
   constructor(
     private mediasoupService: MediasoupService,
@@ -45,12 +45,19 @@ export class RecordingService implements OnModuleDestroy {
       }
     }
 
-    this.logger.log(`Iniciando grabación para ${streamerId} con ${producers.length} productores: ${producers.map(p => p.kind).join(', ')}`);
+    const isResume = this.ffmpegProcesses.has(streamerId);
+    if (isResume) {
+      this.logger.log(`Resumiendo grabación para ${streamerId} (${producers.length} productores)`);
+    } else {
+      this.logger.log(`Iniciando grabación para ${streamerId} con ${producers.length} productores: ${producers.map(p => p.kind).join(', ')}`);
+      await this.stopRecording(streamerId);
+    }
 
     const router = this.mediasoupService.getRouter();
+    const transports: types.PlainTransport[] = [];
+    const consumers: types.Consumer[] = [];
+    const portsMap: Map<string, number> = isResume ? (this.recordPorts.get(streamerId) || new Map()) : new Map();
 
-    // Clean up existing recording if any
-    await this.stopRecording(streamerId);
     let sdpLines = [
       'v=0',
       'o=- 0 0 IN IP4 127.0.0.1',
@@ -59,16 +66,15 @@ export class RecordingService implements OnModuleDestroy {
       't=0 0'
     ];
 
-    const transports: types.PlainTransport[] = [];
-    const consumers: types.Consumer[] = [];
-    const ports: number[] = [];
-
     for (const producer of producers) {
       const plainTransport = await this.mediasoupService.createPlainTransport();
       transports.push(plainTransport);
 
-      const ffmpegPort = this.getFreePort();
-      ports.push(ffmpegPort);
+      let ffmpegPort = portsMap.get(producer.kind);
+      if (!ffmpegPort) {
+        ffmpegPort = this.getFreePort();
+        portsMap.set(producer.kind, ffmpegPort);
+      }
 
       // Mediasoup enviará el flujo RTP a este puerto (donde FFmpeg escuchará)
       await plainTransport.connect({
@@ -84,26 +90,26 @@ export class RecordingService implements OnModuleDestroy {
       });
       consumers.push(consumer);
 
-      const rtpParameters = consumer.rtpParameters;
-      const pt = rtpParameters.codecs[0].payloadType;
-      const codecName = rtpParameters.codecs[0].mimeType.split('/')[1];
-      const clockRate = rtpParameters.codecs[0].clockRate;
-      const channels = rtpParameters.codecs[0].channels || 1;
+      if (!isResume) {
+        const rtpParameters = consumer.rtpParameters;
+        const pt = rtpParameters.codecs[0].payloadType;
+        const codecName = rtpParameters.codecs[0].mimeType.split('/')[1];
+        const clockRate = rtpParameters.codecs[0].clockRate;
+        const channels = rtpParameters.codecs[0].channels || 1;
 
-      sdpLines.push(`m=${producer.kind} ${ffmpegPort} RTP/AVP ${pt}`);
-      if (producer.kind === 'audio') {
-        sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}/${channels}`);
-      } else {
-        sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}`);
-        // a=framerate es CRUCIAL: sin él, FFmpeg interpreta el clockRate de 90kHz
-        // como 90,000 fps en lugar de 30fps, causando burst de paquetes y video congelado.
-        sdpLines.push('a=framerate:30');
-        const fmtpParams: string[] = [];
-        for (const [key, value] of Object.entries(rtpParameters.codecs[0].parameters || {})) {
-          fmtpParams.push(`${key}=${value}`);
-        }
-        if (fmtpParams.length > 0) {
-          sdpLines.push(`a=fmtp:${pt} ${fmtpParams.join(';')}`);
+        sdpLines.push(`m=${producer.kind} ${ffmpegPort} RTP/AVP ${pt}`);
+        if (producer.kind === 'audio') {
+          sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}/${channels}`);
+        } else {
+          sdpLines.push(`a=rtpmap:${pt} ${codecName}/${clockRate}`);
+          sdpLines.push('a=framerate:30');
+          const fmtpParams: string[] = [];
+          for (const [key, value] of Object.entries(rtpParameters.codecs[0].parameters || {})) {
+            fmtpParams.push(`${key}=${value}`);
+          }
+          if (fmtpParams.length > 0) {
+            sdpLines.push(`a=fmtp:${pt} ${fmtpParams.join(';')}`);
+          }
         }
       }
 
@@ -112,11 +118,12 @@ export class RecordingService implements OnModuleDestroy {
 
     this.recordTransports.set(streamerId, transports);
     this.recordConsumers.set(streamerId, consumers);
-    this.recordPorts.set(streamerId, ports);
+    this.recordPorts.set(streamerId, portsMap);
 
-    const sdpString = sdpLines.join('\n');
-    const sdpPath = path.join(__dirname, '..', '..', `stream-${streamerId}.sdp`);
-    fs.writeFileSync(sdpPath, sdpString);
+    if (!isResume) {
+      const sdpString = sdpLines.join('\n');
+      const sdpPath = path.join(__dirname, '..', '..', `stream-${streamerId}.sdp`);
+      fs.writeFileSync(sdpPath, sdpString);
 
     const dateStr = new Date().toISOString().split('T')[0];
     const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
@@ -130,13 +137,13 @@ export class RecordingService implements OnModuleDestroy {
     const fileNameFormat = `rec__${streamerId}__${tId}__${uId}__%Y%m%d_%H%M%S.mp4`;
     const outputPath = path.join(dirPath, fileNameFormat);
 
-    const process = ffmpeg(sdpPath)
-      .inputOptions([
-        '-protocol_whitelist', 'file,rtp,udp',
-        '-rw_timeout', '5000000',
-        '-analyzeduration', '5000000',
-        '-probesize', '5000000'
-      ])
+      const process = ffmpeg(sdpPath)
+        .inputOptions([
+          '-protocol_whitelist', 'file,rtp,udp',
+          '-rw_timeout', '10000000', // 10 seconds of tolerance for reconnects
+          '-analyzeduration', '5000000',
+          '-probesize', '5000000'
+        ])
       .outputOptions([
         '-c:v', 'copy',
         '-c:a', 'aac',
@@ -155,13 +162,14 @@ export class RecordingService implements OnModuleDestroy {
         this.logger.error(`FFmpeg error: ${err.message}`);
         await this.finalizeRecording(streamerId, dirPath);
       })
-      .on('end', async () => {
-        this.logger.log(`Grabación finalizada para streamer ${streamerId}`);
-        await this.finalizeRecording(streamerId, dirPath);
-      });
+        .on('end', async () => {
+          this.logger.log(`Grabación finalizada para streamer ${streamerId}`);
+          await this.finalizeRecording(streamerId, dirPath);
+        });
 
-    process.save(outputPath);
-    this.ffmpegProcesses.set(streamerId, process);
+      process.save(outputPath);
+      this.ffmpegProcesses.set(streamerId, process);
+    }
 
     // FIX: FFmpeg takes a few milliseconds to start and bind the UDP ports.
     // If Mediasoup sends the initial keyframe before FFmpeg is listening, it gets lost,
@@ -178,7 +186,7 @@ export class RecordingService implements OnModuleDestroy {
             const producer = producers.find(p => p.id === consumer.producerId);
             if (producer) {
               const stats = await producer.getStats();
-              this.logger.debug(`Stats de red del cliente: ${JSON.stringify(stats)}`);
+              this.logger.debug(`Stats de red del cliente (${consumer.id}): ${JSON.stringify(stats)}`);
             }
           } catch (e) {
             this.logger.error(`Failed to request keyframe: ${e}`);
@@ -203,9 +211,11 @@ export class RecordingService implements OnModuleDestroy {
         // Send a dummy UDP packet to unblock FFmpeg on Windows so it can process 'q'
         const dgram = require('dgram');
         const dummyClient = dgram.createSocket('udp4');
-        const ports = this.recordPorts.get(streamerId) || [];
-        for (const port of ports) {
-          dummyClient.send(Buffer.from([0x00]), port, '127.0.0.1', () => {});
+        const portsMap = this.recordPorts.get(streamerId);
+        if (portsMap) {
+          for (const port of portsMap.values()) {
+            dummyClient.send(Buffer.from([0x00]), port, '127.0.0.1', () => {});
+          }
         }
         setTimeout(() => dummyClient.close(), 100);
 
@@ -236,6 +246,24 @@ export class RecordingService implements OnModuleDestroy {
     } catch (e) {
       this.logger.error(`Error esperando a que ffmpeg termine: ${e.message}`);
     }
+  }
+
+  async pauseRecording(streamerId: string): Promise<void> {
+    this.logger.log(`Pausando grabación (cerrando consumers) para ${streamerId}. FFmpeg se quedará esperando reconexión por 10s...`);
+    
+    const consumers = this.recordConsumers.get(streamerId) || [];
+    for (const consumer of consumers) {
+      consumer.close();
+    }
+    this.recordConsumers.delete(streamerId);
+
+    const transports = this.recordTransports.get(streamerId) || [];
+    for (const transport of transports) {
+      transport.close();
+    }
+    this.recordTransports.delete(streamerId);
+    
+    // IMPORTANTE: NO matamos a ffmpegProc, ni borramos ffmpegProcesses ni recordPorts.
   }
 
   onModuleDestroy() {
