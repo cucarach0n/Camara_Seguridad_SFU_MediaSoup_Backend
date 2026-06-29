@@ -95,9 +95,20 @@ export class RecordingService implements OnModuleDestroy {
         rtcpPort: activeFfmpegPort + 1
       });
 
+      // Filter out RTX and FEC from router capabilities so Mediasoup only sends the raw stream
+      const noRtxCapabilities = {
+        ...router.rtpCapabilities,
+        codecs: router.rtpCapabilities.codecs.filter(c => 
+          !c.mimeType.toLowerCase().includes('/rtx') && 
+          !c.mimeType.toLowerCase().includes('/ulpfec') &&
+          !c.mimeType.toLowerCase().includes('/flexfec') &&
+          !c.mimeType.toLowerCase().includes('/red')
+        )
+      };
+
       const consumer = await plainTransport.consume({
         producerId: producer.id,
-        rtpCapabilities: router.rtpCapabilities, // consume with router's full capabilities
+        rtpCapabilities: noRtxCapabilities,
         paused: true
       });
       consumers.push(consumer);
