@@ -8,6 +8,7 @@ import { GrabacionesService } from '../grabaciones/grabaciones.service';
 import { TransmisionesService } from '../transmisiones/transmisiones.service';
 import { DvrUploaderService } from './dvr-uploader.service';
 import { forwardRef, Inject } from '@nestjs/common';
+import { RtpProxy } from './rtp-proxy';
 
 @Injectable()
 export class RecordingService implements OnModuleDestroy {
@@ -17,6 +18,7 @@ export class RecordingService implements OnModuleDestroy {
   private ffmpegProcesses: Map<string, any> = new Map();
   private stopResolvers: Map<string, () => void> = new Map();
   private recordPorts: Map<string, Map<string, number>> = new Map();
+  private rtpProxies: Map<string, Map<string, RtpProxy>> = new Map();
 
   constructor(
     private mediasoupService: MediasoupService,
@@ -57,6 +59,7 @@ export class RecordingService implements OnModuleDestroy {
     const transports: types.PlainTransport[] = [];
     const consumers: types.Consumer[] = [];
     const portsMap: Map<string, number> = isResume ? (this.recordPorts.get(streamerId) || new Map()) : new Map();
+    const proxiesMap: Map<string, RtpProxy> = isResume ? (this.rtpProxies.get(streamerId) || new Map()) : new Map();
 
     let sdpLines = [
       'v=0',
@@ -71,16 +74,25 @@ export class RecordingService implements OnModuleDestroy {
       transports.push(plainTransport);
 
       let ffmpegPort = portsMap.get(producer.kind);
-      if (!ffmpegPort) {
+      let proxy = proxiesMap.get(producer.kind);
+      
+      if (!ffmpegPort || !proxy) {
         ffmpegPort = this.getFreePort();
         portsMap.set(producer.kind, ffmpegPort);
+
+        proxy = new RtpProxy(ffmpegPort);
+        await proxy.start();
+        proxiesMap.set(producer.kind, proxy);
       }
 
-      // Mediasoup enviará el flujo RTP a este puerto (donde FFmpeg escuchará)
+      const activeProxy = proxy!;
+      const activeFfmpegPort = ffmpegPort!;
+
+      // Mediasoup enviará el flujo RTP al proxy, que normalizará el SSRC y enviará a FFmpeg
       await plainTransport.connect({
         ip: '127.0.0.1',
-        port: ffmpegPort,
-        rtcpPort: ffmpegPort + 1
+        port: activeProxy.proxyPort,
+        rtcpPort: activeFfmpegPort + 1
       });
 
       const consumer = await plainTransport.consume({
@@ -119,6 +131,7 @@ export class RecordingService implements OnModuleDestroy {
     this.recordTransports.set(streamerId, transports);
     this.recordConsumers.set(streamerId, consumers);
     this.recordPorts.set(streamerId, portsMap);
+    this.rtpProxies.set(streamerId, proxiesMap);
 
     if (!isResume) {
       const sdpString = sdpLines.join('\n');
@@ -226,6 +239,14 @@ export class RecordingService implements OnModuleDestroy {
       }
       this.ffmpegProcesses.delete(streamerId);
       this.recordPorts.delete(streamerId);
+      
+      const proxiesMap = this.rtpProxies.get(streamerId);
+      if (proxiesMap) {
+        for (const proxy of proxiesMap.values()) {
+          proxy.stop();
+        }
+        this.rtpProxies.delete(streamerId);
+      }
     }
     
     // Close consumers and transports FIRST so Mediasoup sends RTCP BYE to FFmpeg
