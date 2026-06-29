@@ -14,6 +14,8 @@ export class RtpProxy {
   private seqOffset: number = 0;
   private tsOffset: number = 0;
   private mainPt?: number;
+  private clockRate: number = 90000;
+  private lastPacketTime: number = Date.now();
 
   constructor(private targetPort: number, private targetIp: string = '127.0.0.1') {
     this.server = dgram.createSocket('udp4');
@@ -45,13 +47,17 @@ export class RtpProxy {
           this.currentSsrc = currentSsrc;
           this.lastSeq = currentSeq;
           this.lastTs = currentTs;
+          this.lastPacketTime = Date.now();
         } else {
           if (currentSsrc !== this.currentSsrc) {
             // ¡Reconexión detectada! (Nuevo flujo RTP)
-            // Calculamos offsets para que los Sequence Numbers y Timestamps continúen suavemente
+            const now = Date.now();
+            const elapsedMs = now - this.lastPacketTime;
+            // Avanzar el RTP clock la cantidad exacta de tiempo que estuvimos desconectados
+            const elapsedTicks = Math.floor(elapsedMs * (this.clockRate / 1000));
+            
             this.seqOffset = (this.lastSeq + 1 - currentSeq) & 0xFFFF;
-            // Agregamos un pequeño salto de 1 segundo (90000 ticks) para simular pérdida natural
-            this.tsOffset = (this.lastTs + 90000 - currentTs) >>> 0; 
+            this.tsOffset = (this.lastTs + elapsedTicks - currentTs) >>> 0; 
             this.currentSsrc = currentSsrc;
           }
 
@@ -66,10 +72,12 @@ export class RtpProxy {
             
             this.lastSeq = newSeq;
             this.lastTs = newTs;
+            this.lastPacketTime = Date.now();
           } else {
             // Flujo normal, solo actualizamos el último valor visto
             this.lastSeq = currentSeq;
             this.lastTs = currentTs;
+            this.lastPacketTime = Date.now();
           }
         }
       }
@@ -77,8 +85,9 @@ export class RtpProxy {
     });
   }
 
-  setMainPt(pt: number) {
+  setMainPt(pt: number, clockRate: number = 90000) {
     this.mainPt = pt;
+    this.clockRate = clockRate;
   }
 
   async start(): Promise<number> {

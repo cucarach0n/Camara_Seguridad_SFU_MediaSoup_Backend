@@ -120,7 +120,7 @@ export class RecordingService implements OnModuleDestroy {
         const clockRate = rtpParameters.codecs[0].clockRate;
         const channels = rtpParameters.codecs[0].channels || 1;
 
-        activeProxy.setMainPt(pt);
+        activeProxy.setMainPt(pt, clockRate);
 
         sdpLines.push(`m=${producer.kind} ${ffmpegPort} RTP/AVP ${pt}`);
         if (producer.kind === 'audio') {
@@ -168,9 +168,7 @@ export class RecordingService implements OnModuleDestroy {
           '-protocol_whitelist', 'file,rtp,udp',
           '-rw_timeout', '10000000', // 10 seconds of tolerance for reconnects
           '-analyzeduration', '5000000',
-          '-probesize', '5000000',
-          '-use_wallclock_as_timestamps', '1', // Ignora saltos de timestamp RTP al reconectar
-          '-fflags', '+genpts' // Regenera timestamps correctamente
+          '-probesize', '5000000'
         ])
       .outputOptions([
         '-c:v', 'copy',
