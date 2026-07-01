@@ -72,7 +72,13 @@ export class GrabacionesController {
           const fileId = match[1];
           const driveRes = await this.driveService.getFileStream(fileId, req.headers.range);
           
-          for (const key in driveRes.headers) {
+          const safeHeaders = [
+            'content-type',
+            'content-length',
+            'content-range',
+            'accept-ranges'
+          ];
+          for (const key of safeHeaders) {
              const val = driveRes.headers[key];
              if (val !== undefined) res.setHeader(key, val as any);
           }
