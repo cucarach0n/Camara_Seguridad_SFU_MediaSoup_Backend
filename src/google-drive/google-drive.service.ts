@@ -51,7 +51,7 @@ export class GoogleDriveService {
       if (res.data.files && res.data.files.length > 0) {
         return res.data.files[0].id || null;
       }
-      
+
       const fileMetadata = {
         name: folderName,
         mimeType: 'application/vnd.google-apps.folder',
@@ -87,21 +87,25 @@ export class GoogleDriveService {
         const userFolderId = await this.getOrCreateFolder(`Usuario_${userIdStr}`, targetFolderId);
         if (userFolderId) targetFolderId = userFolderId;
       }
-      
+
       if (dateStr) {
         const dateFolderId = await this.getOrCreateFolder(dateStr, targetFolderId);
         if (dateFolderId) targetFolderId = dateFolderId;
       }
 
       this.logger.log(`Subiendo a Google Drive: ${fileName} en carpeta ${targetFolderId}...`);
-      
+
+      // 1. Define el mimeType en una variable
+      const fileMimeType = fileName.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+
       const fileMetadata = {
         name: fileName,
         parents: [targetFolderId],
+        mimeType: fileMimeType
       };
-      
+
       const media = {
-        mimeType: fileName.endsWith('.webm') ? 'video/webm' : 'video/mp4',
+        mimeType: fileMimeType,
         body: fs.createReadStream(filePath),
       };
 
@@ -138,12 +142,12 @@ export class GoogleDriveService {
 
   async getFileStream(fileId: string, range?: string) {
     if (!this.drive) throw new Error('Drive no está inicializado');
-    
+
     const headers: any = {};
     if (range) {
       headers['Range'] = range;
     }
-    
+
     return this.drive.files.get({
       fileId: fileId,
       alt: 'media'
