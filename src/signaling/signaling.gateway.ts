@@ -308,13 +308,14 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       // Si no existe o han pasado más de 15 minutos (900000 ms)
       if (!fileInfo || (now - fileInfo.startTime) > 15 * 60 * 1000) {
-        const dateStr = new Date().toISOString().split('T')[0];
+        const nowTime = new Date();
+        const dateStr = `${nowTime.getFullYear()}-${String(nowTime.getMonth()+1).padStart(2,'0')}-${String(nowTime.getDate()).padStart(2,'0')}`;
         const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
         if (!fs.existsSync(dirPath)) {
           fs.mkdirSync(dirPath, { recursive: true });
         }
         
-        const timeStr = new Date().toISOString().split('T')[1].replace(/:/g, '-').split('.')[0];
+        const timeStr = `${String(nowTime.getHours()).padStart(2,'0')}-${String(nowTime.getMinutes()).padStart(2,'0')}-${String(nowTime.getSeconds()).padStart(2,'0')}`;
         // Formato esperado por dvr-uploader: rec__[socketId]__[transmisionId]__[userId]__[fecha_hora].webm
         const fileName = path.join(dirPath, `rec__${client.id}__${data.transmisionId}__${client.data.user?.id || 'NA'}__${dateStr}_${timeStr}.webm`);
         

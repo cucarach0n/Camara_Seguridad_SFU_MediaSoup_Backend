@@ -151,7 +151,8 @@ export class RecordingService implements OnModuleDestroy {
       const sdpPath = path.join(__dirname, '..', '..', `stream-${streamerId}.sdp`);
       fs.writeFileSync(sdpPath, sdpString);
 
-    const dateStr = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const dateStr = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
     const dirPath = path.join(__dirname, '..', '..', 'recordings', dateStr);
     if (!fs.existsSync(dirPath)) {
       fs.mkdirSync(dirPath, { recursive: true });
