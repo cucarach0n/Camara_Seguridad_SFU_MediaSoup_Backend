@@ -72,27 +72,42 @@ export class GrabacionesController {
           const fileId = match[1];
           const driveRes = await this.driveService.getFileStream(fileId, req.headers.range);
 
-          // 1. Forzamos Accept-Ranges para que el reproductor web permita adelantar/retroceder
-          res.setHeader('Accept-Ranges', 'bytes');
-
-          const safeHeaders = [
-            'content-type',
-            'content-length',
-            'content-range'
-            //,'accept-ranges'
-          ];
-          for (const key of safeHeaders) {
-            let val = driveRes.headers[key];
-
-            // 2. Interceptamos el Content-Type si Drive lo manda como archivo genérico
-            if (key === 'content-type' && (!val || val === 'application/octet-stream')) {
-              val = record.nombre_archivo.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+          const head: any = {
+            'Accept-Ranges': 'bytes'
+          };
+          
+          const driveHeaders: any = driveRes.headers || {};
+          let driveContentType;
+          
+          if (typeof driveHeaders.forEach === 'function') {
+            driveHeaders.forEach((v, k) => {
+              const lowK = k.toLowerCase();
+              if (lowK === 'content-length' || lowK === 'content-range' || lowK === 'content-type') {
+                head[lowK] = v;
+                if (lowK === 'content-type') driveContentType = v;
+              }
+            });
+          } else {
+            for (const [k, v] of Object.entries(driveHeaders)) {
+              const lowK = k.toLowerCase();
+              if (lowK === 'content-length' || lowK === 'content-range' || lowK === 'content-type') {
+                head[lowK] = v;
+                if (lowK === 'content-type') driveContentType = v;
+              }
             }
-
-            if (val !== undefined) res.setHeader(key, val as string);
           }
-          res.status(driveRes.status);
+          
+          // Interceptar Content-Type genérico
+          if (!driveContentType || driveContentType === 'application/octet-stream') {
+            head['content-type'] = record.nombre_archivo.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+          }
+          
+          res.writeHead(driveRes.status, head);
           driveRes.data.pipe(res);
+
+          driveRes.data.on('error', (err) => {
+            console.error('[DriveStream] Stream error:', err);
+          });
 
           // 3. Evitamos que el servidor colapse si el usuario cierra el video o adelanta
           req.on('close', () => {
