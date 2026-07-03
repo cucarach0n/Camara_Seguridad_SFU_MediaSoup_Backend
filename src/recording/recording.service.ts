@@ -172,6 +172,8 @@ export class RecordingService implements OnModuleDestroy {
           '-probesize', '5000000'
         ])
       .outputOptions([
+        '-map', '0:v?',
+        '-map', '0:a?',
         '-c:v', 'copy',
         '-c:a', 'aac',
         '-strict', 'experimental',
