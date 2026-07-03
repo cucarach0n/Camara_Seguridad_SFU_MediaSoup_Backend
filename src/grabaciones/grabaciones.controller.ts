@@ -12,7 +12,7 @@ export class GrabacionesController {
   constructor(
     private service: GrabacionesService,
     private driveService: GoogleDriveService
-  ) {}
+  ) { }
 
   @Get()
   listar(@Request() req) {
@@ -34,9 +34,9 @@ export class GrabacionesController {
   async streamVideo(@Param('id', ParseIntPipe) id: number, @Request() req, @Res() res: Response) {
     try {
       const record = await this.service.getById(id, req.user.id, req.user.rol);
-      
+
       const localPath = path.join(__dirname, '..', '..', 'recordings', record.ruta_archivo, record.nombre_archivo);
-      
+
       if (fs.existsSync(localPath)) {
         // Stream local file
         const stat = fs.statSync(localPath);
@@ -71,19 +71,35 @@ export class GrabacionesController {
         if (match && match[1]) {
           const fileId = match[1];
           const driveRes = await this.driveService.getFileStream(fileId, req.headers.range);
-          
+
+          // 1. Forzamos Accept-Ranges para que el reproductor web permita adelantar/retroceder
+          res.setHeader('Accept-Ranges', 'bytes');
+
           const safeHeaders = [
             'content-type',
             'content-length',
-            'content-range',
-            'accept-ranges'
+            'content-range'
+            //,'accept-ranges'
           ];
           for (const key of safeHeaders) {
-             const val = driveRes.headers[key];
-             if (val !== undefined) res.setHeader(key, val as any);
+            let val = driveRes.headers[key];
+
+            // 2. Interceptamos el Content-Type si Drive lo manda como archivo genérico
+            if (key === 'content-type' && (!val || val === 'application/octet-stream')) {
+              val = record.nombre_archivo.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+            }
+
+            if (val !== undefined) res.setHeader(key, val as string);
           }
           res.status(driveRes.status);
           driveRes.data.pipe(res);
+
+          // 3. Evitamos que el servidor colapse si el usuario cierra el video o adelanta
+          req.on('close', () => {
+            if (!driveRes.data.destroyed) {
+              driveRes.data.destroy();
+            }
+          });
         } else {
           res.status(HttpStatus.NOT_FOUND).send('Drive URL inválida');
         }
