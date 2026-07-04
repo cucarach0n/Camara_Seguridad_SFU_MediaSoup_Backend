@@ -29,15 +29,44 @@ export class DvrCleanerService {
       const stat = fs.statSync(dirPath);
 
       if (stat.isDirectory()) {
-        // Asumiendo que el nombre del directorio es YYYY-MM-DD
-        const dirDate = new Date(dir).getTime();
-        
-        // Si el directorio no es una fecha válida, fallback al stat.mtimeMs
-        const ageMs = isNaN(dirDate) ? (now - stat.mtimeMs) : (now - dirDate);
+        const files = fs.readdirSync(dirPath);
+        let hasRecentFiles = false;
 
-        if (ageMs > maxAgeMs) {
-          this.logger.log(`Borrando directorio antiguo del DVR: ${dirPath}`);
-          fs.rmSync(dirPath, { recursive: true, force: true });
+        for (const file of files) {
+          const filePath = path.join(dirPath, file);
+          const fileStat = fs.statSync(filePath);
+          const ageMs = now - fileStat.mtimeMs;
+
+          if (ageMs > maxAgeMs) {
+            this.logger.log(`Borrando archivo antiguo del DVR: ${filePath}`);
+            try {
+              fs.unlinkSync(filePath);
+            } catch (e) {
+              this.logger.error(`Error borrando ${filePath}`, e);
+            }
+          } else {
+            hasRecentFiles = true;
+          }
+        }
+
+        // Solo borrar el directorio si quedó completamente vacío y ya no tiene uso reciente.
+        // Evita romper ffmpeg si casualmente estaba escribiendo.
+        if (!hasRecentFiles) {
+           const remainingFiles = fs.readdirSync(dirPath);
+           if (remainingFiles.length === 0) {
+             const dirDate = new Date(dir).getTime();
+             const dirAgeMs = isNaN(dirDate) ? (now - stat.mtimeMs) : (now - dirDate);
+             
+             // Darle margen de 2 días a los directorios vacíos antes de borrarlos
+             if (dirAgeMs > maxAgeMs * 2) {
+               this.logger.log(`Borrando directorio vacío y antiguo: ${dirPath}`);
+               try {
+                 fs.rmdirSync(dirPath);
+               } catch (e) {
+                 this.logger.error(`Error borrando directorio ${dirPath}`, e);
+               }
+             }
+           }
         }
       }
     }
