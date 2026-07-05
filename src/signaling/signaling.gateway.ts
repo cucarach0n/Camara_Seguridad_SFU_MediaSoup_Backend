@@ -623,6 +623,16 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     return true;
   }
 
+  @SubscribeMessage('gateway-stream-failed')
+  async handleGatewayStreamFailed(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { cameraId: string }
+  ) {
+    if (!client.data.isGateway) return;
+    this.logger.warn(`Gateway local reportó fallo de stream (FFmpeg crash o timeout) para la cámara ${data.cameraId}`);
+    await this.stopRtspStream(data.cameraId);
+  }
+
   @SubscribeMessage('leave-camera-stream')
   handleLeaveCameraStream(
     @ConnectedSocket() client: Socket,
