@@ -701,7 +701,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
         // Verificar si la cámara está grabando (DVR = ON)
         try {
           const transmision = await this.transmisionesService.findByCameraId(cameraId);
-          if (transmision && transmision.grabacion_activa === 1) {
+          if (transmision && Number(transmision.grabacion_activa) === 1) {
             this.logger.log(`Último viewer salió, pero la cámara ${cameraId} está GRABANDO. Persistiendo stream RTSP.`);
             return;
           }
