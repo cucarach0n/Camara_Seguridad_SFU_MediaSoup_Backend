@@ -713,7 +713,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
-  private async stopRtspStream(cameraId: string) {
+  public async stopRtspStream(cameraId: string, intentional = true) {
     const stream = this.rtspStreams.get(cameraId);
     if (stream) {
       this.logger.log(`Deteniendo stream RTSP de cámara: ${cameraId}`);
@@ -761,7 +761,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       this.broadcastCameras();
       
       // Notificar a todos los clientes para que cierren el reproductor de inmediato
-      this.server.emit('camera-stopped', { cameraId });
+      this.server.emit('camera-stopped', { cameraId, intentional });
     }
   }
 
@@ -812,9 +812,9 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   @SubscribeMessage('gateway-stream-failed')
-  handleGatewayStreamFailed(@ConnectedSocket() client: Socket, @MessageBody() data: { cameraId: string }) {
+  async handleGatewayStreamFailed(@ConnectedSocket() client: Socket, @MessageBody() data: { cameraId: string }) {
     if (!client.data.isGateway) return;
     this.logger.warn(`Gateway notificó fallo definitivo en cámara ${data.cameraId}`);
-    this.stopRtspStream(data.cameraId);
+    await this.stopRtspStream(data.cameraId, false);
   }
 }
