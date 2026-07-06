@@ -19,6 +19,7 @@ export class GrabacionesService {
     transmision_id: number | null;
     nombre_archivo: string;
     ruta_archivo: string;
+    creado_en?: Date;
   }): Promise<Grabacion> {
     const grabacion = this.repo.create(data);
     return this.repo.save(grabacion);

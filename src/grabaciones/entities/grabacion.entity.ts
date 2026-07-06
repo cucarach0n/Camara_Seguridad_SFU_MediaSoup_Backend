@@ -39,6 +39,6 @@ export class Grabacion {
   @Column({ type: 'varchar', length: 500, nullable: true })
   url_drive: string | null;
 
-  @CreateDateColumn()
+  @Column({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   creado_en: Date;
 }

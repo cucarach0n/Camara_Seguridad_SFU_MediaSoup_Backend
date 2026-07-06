@@ -80,6 +80,7 @@ export class DvrUploaderService {
         let transmisionId: number | null = null;
         let userId: number | null = null;
         let duracion_segundos = 0;
+        let startDate: Date | undefined;
         const parts = file.split('__');
         if (parts.length >= 5) {
           transmisionId = parts[2] !== 'NA' ? parseInt(parts[2], 10) : null;
@@ -95,7 +96,7 @@ export class DvrUploaderService {
               const min = parseInt(dateStr.substring(11, 13), 10);
               const sec = parseInt(dateStr.substring(13, 15), 10);
               
-              const startDate = new Date(year, month, day, hour, min, sec);
+              startDate = new Date(year, month, day, hour, min, sec);
               const duracion_matematica = Math.floor((stat.mtimeMs - startDate.getTime()) / 1000);
               const duracion_real = await this.getVideoDuration(filePath);
               
@@ -116,6 +117,7 @@ export class DvrUploaderService {
               transmision_id: transmisionId,
               nombre_archivo: file,
               ruta_archivo: fechaDir,
+              creado_en: startDate,
             });
             grabacionId = g.id;
             
