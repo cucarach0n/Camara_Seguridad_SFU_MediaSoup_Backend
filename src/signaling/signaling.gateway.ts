@@ -448,6 +448,27 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       }
 
       // Buscar socket id del gateway conectado
+      return await this.internalStartCameraStream(cameraId);
+    } catch(e) {
+      this.logger.error(`Error en request-camera-stream: ${e.message}`);
+      return { error: e.message };
+    }
+  }
+
+  public async internalStartCameraStream(cameraId: string): Promise<any> {
+    try {
+      const transmision = await this.transmisionesService.findByCameraId(cameraId);
+      if (!transmision || !transmision.gateway) {
+        return { error: 'Transmisión o Gateway no encontrado' };
+      }
+
+      const activeStream = this.rtspStreams.get(cameraId);
+      if (activeStream) {
+        return {
+          videoProducerId: activeStream.videoProducer.id,
+          audioProducerId: activeStream.audioProducer ? activeStream.audioProducer.id : null
+        };
+      }
       let gatewaySocketId: string | null = null;
       for (const [sId, gw] of this.gateways.entries()) {
         if (gw.gatewayId === transmision.gateway.identificador) {
@@ -586,7 +607,7 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
       audioProducerId: audioProducer ? audioProducer.id : null
     };
     } catch(e) {
-      this.logger.error(`Error en request-camera-stream: ${e.message}`);
+      this.logger.error(`Error en internalStartCameraStream: ${e.message}`);
       return { error: e.message };
     }
   }
@@ -816,5 +837,19 @@ export class SignalingGateway implements OnGatewayConnection, OnGatewayDisconnec
     if (!client.data.isGateway) return;
     this.logger.warn(`Gateway notificó fallo definitivo en cámara ${data.cameraId}`);
     await this.stopRtspStream(data.cameraId, false);
+
+    // Auto-reconectar desde el backend si la grabación está activa (para asegurar DVR 24/7)
+    try {
+      const transmision = await this.transmisionesService.findByCameraId(data.cameraId);
+      if (transmision && Number(transmision.grabacion_activa) === 1) {
+        this.logger.log(`Cámara ${data.cameraId} tiene DVR activo. Intentando auto-reconectar en 10s desde el backend...`);
+        setTimeout(() => {
+          this.logger.log(`Ejecutando auto-reconexión para cámara ${data.cameraId}`);
+          this.internalStartCameraStream(data.cameraId).catch(e => this.logger.error(`Error auto-reconexión: ${e.message}`));
+        }, 10000);
+      }
+    } catch(e) {
+      this.logger.error(`Error verificando grabacion_activa: ${e.message}`);
+    }
   }
 }
